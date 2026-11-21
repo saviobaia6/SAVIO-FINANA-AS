@@ -34,6 +34,8 @@ export default defineConfig(() => {
       },
     },
     server: {
+      // Allow Cloud Run / AI Studio preview proxy hostnames in middlewareMode
+      allowedHosts: true as const,
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',

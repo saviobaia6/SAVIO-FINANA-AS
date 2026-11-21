@@ -53,16 +53,20 @@ const ChatRequestSchema = z.object({
   }),
 });
 
-const ParseDocumentSchema = z.object({
-  textContent: z.string().max(30000).optional(),
-  fileName: z.string().max(255).optional(),
-  fileData: z
-    .object({
-      mimeType: z.string().regex(/^(application\/pdf|image\/(png|jpeg|jpg|webp))$/),
-      base64: z.string().min(10),
-    })
-    .optional(),
-});
+const ParseDocumentSchema = z
+  .object({
+    textContent: z.string().max(30000).optional(),
+    fileName: z.string().max(255).optional(),
+    fileData: z
+      .object({
+        mimeType: z.string().regex(/^(application\/pdf|image\/(png|jpeg|jpg|webp))$/),
+        base64: z.string().min(10),
+      })
+      .optional(),
+  })
+  .refine((data) => Boolean(data.textContent || data.fileData), {
+    message: 'Envie um arquivo PDF/imagem válido ou texto para leitura.',
+  });
 
 const ExtractedDocResultSchema = z.object({
   description: z.string().min(1),
@@ -74,16 +78,20 @@ const ExtractedDocResultSchema = z.object({
   confidenceNote: z.string().optional(),
 });
 
-const ParseBoletoRequestSchema = z.object({
-  linhaDigitavel: z.string().optional(),
-  textContent: z.string().max(15000).optional(),
-  fileData: z
-    .object({
-      mimeType: z.string().regex(/^(application\/pdf|image\/(png|jpeg|jpg|webp))$/),
-      base64: z.string().min(10),
-    })
-    .optional(),
-});
+const ParseBoletoRequestSchema = z
+  .object({
+    linhaDigitavel: z.string().optional(),
+    textContent: z.string().max(15000).optional(),
+    fileData: z
+      .object({
+        mimeType: z.string().regex(/^(application\/pdf|image\/(png|jpeg|jpg|webp))$/),
+        base64: z.string().min(10),
+      })
+      .optional(),
+  })
+  .refine((data) => Boolean(data.linhaDigitavel?.trim() || data.textContent?.trim() || data.fileData), {
+    message: 'Informe a linha digitável, texto ou arquivo do boleto.',
+  });
 
 const ExtractedBoletoSchema = z.object({
   beneficiario: z.string().min(1),
