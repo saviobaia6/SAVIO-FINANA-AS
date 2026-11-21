@@ -1,0 +1,16 @@
+{
+  "name": "SAVIO FINANÇAS",
+  "short_name": "SAVIO FINANÇAS",
+  "description": "Plataforma inteligente de gestão financeira pessoal e empresarial",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#14263d",
+  "theme_color": "#14263d",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ]
+}
