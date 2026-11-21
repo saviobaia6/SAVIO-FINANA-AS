@@ -1,15 +1,16 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { sanitizeCellForSheet } from '../utils/sheetGuard';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
+// Minimum required scopes as requested in Phase 0
 provider.addScope('https://www.googleapis.com/auth/drive.file');
-provider.addScope('https://www.googleapis.com/auth/spreadsheets');
-provider.addScope('https://www.googleapis.com/auth/calendar');
 provider.addScope('https://www.googleapis.com/auth/calendar.events');
+provider.addScope('https://www.googleapis.com/auth/spreadsheets');
 
 let cachedAccessToken: string | null = null;
 let isSigningIn = false;
@@ -45,9 +46,8 @@ export const signInWithGoogleWorkspace = async (): Promise<{ user: User; accessT
 
 export const getWorkspaceAccessToken = () => cachedAccessToken;
 
-// Google Sheets Export
+// Google Sheets Export with formula injection protection
 export const exportToGoogleSheets = async (token: string, transactions: any[]) => {
-  // Create spreadsheet
   const createRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
     method: 'POST',
     headers: {
@@ -58,24 +58,26 @@ export const exportToGoogleSheets = async (token: string, transactions: any[]) =
       properties: { title: `FINANCE IA - Relatório ${new Date().toLocaleDateString('pt-BR')}` }
     })
   });
+  if (!createRes.ok) {
+    throw new Error('Falha ao criar planilha no Google Sheets');
+  }
   const spreadsheet = await createRes.json();
   const spreadsheetId = spreadsheet.spreadsheetId;
 
-  // Format rows
   const rows = [
-    ['Data', 'Descrição', 'Categoria', 'Vínculo', 'Conta', 'Direção', 'Valor (R$)'],
+    ['Data', 'Descrição', 'Categoria', 'Vínculo', 'Conta', 'Direção', 'Valor (R$)'].map(sanitizeCellForSheet),
     ...transactions.map(t => [
-      t.date,
-      t.description,
-      t.category,
-      t.entityId,
-      t.account,
-      t.direction === 'INCOME' ? 'Receita' : 'Despesa',
-      t.amount
+      sanitizeCellForSheet(t.date),
+      sanitizeCellForSheet(t.description),
+      sanitizeCellForSheet(t.category),
+      sanitizeCellForSheet(t.entityId),
+      sanitizeCellForSheet(t.account),
+      sanitizeCellForSheet(t.direction === 'INCOME' ? 'Receita' : 'Despesa'),
+      sanitizeCellForSheet(t.amount)
     ])
   ];
 
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1:append?valueInputOption=USER_ENTERED`, {
+  const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1:append?valueInputOption=USER_ENTERED`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -88,19 +90,28 @@ export const exportToGoogleSheets = async (token: string, transactions: any[]) =
     })
   });
 
+  if (!appendRes.ok) {
+    throw new Error('Falha ao inserir dados no Google Sheets');
+  }
+
   return spreadsheet.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
 };
 
-// Google Calendar Event Sync
+// Google Calendar Event Sync with exclusive end date for all-day events and res.ok check
 export const syncBoletoToCalendar = async (token: string, boleto: { beneficiario: string; valorOriginal: number; vencimento: string; descricao: string }) => {
+  // Calculate exclusive end date (next day) for all-day events
+  const dueDateObj = new Date(boleto.vencimento);
+  dueDateObj.setDate(dueDateObj.getDate() + 1);
+  const exclusiveEndDate = dueDateObj.toISOString().split('T')[0];
+
   const event = {
     summary: `[FINANCE IA] Vencimento: ${boleto.beneficiario} - R$ ${boleto.valorOriginal}`,
     description: `Boleto / Conta a pagar: ${boleto.descricao}`,
     start: { date: boleto.vencimento },
-    end: { date: boleto.vencimento },
+    end: { date: exclusiveEndDate },
     reminders: {
       useDefault: false,
-      overrides: [{ method: 'popup', minutes: 1440 }] // 1 day before
+      overrides: [{ method: 'popup', minutes: 1440 }]
     }
   };
 
@@ -112,10 +123,15 @@ export const syncBoletoToCalendar = async (token: string, boleto: { beneficiario
     },
     body: JSON.stringify(event)
   });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error?.message || 'Falha ao sincronizar com Google Calendar');
+  }
   return await res.json();
 };
 
-// Google Drive Backup
+// Google Drive Backup with res.ok check
 export const backupToGoogleDrive = async (token: string, financialData: any) => {
   const fileContent = JSON.stringify(financialData, null, 2);
   const metadata = {
@@ -134,5 +150,9 @@ export const backupToGoogleDrive = async (token: string, financialData: any) => 
     },
     body: form
   });
+
+  if (!res.ok) {
+    throw new Error('Falha ao enviar backup para o Google Drive');
+  }
   return await res.json();
 };

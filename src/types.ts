@@ -23,6 +23,7 @@ export interface Account {
   accountName: string;
   accountType: 'checking' | 'savings' | 'business' | 'investment';
   balance: number;
+  openingBalance?: number;
 }
 
 export interface CreditCard {
