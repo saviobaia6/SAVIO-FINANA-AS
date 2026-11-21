@@ -5,6 +5,7 @@ import {
   checkDuplicateTransaction,
   calculateBudget503020,
   parseCurrencyInput,
+  detectInternalTransfer,
 } from '../financeCalculations';
 import { validateAndParseBoleto, calcMod10, calcMod11Bank } from '../boletoValidator';
 import { sanitizeCellForSheet } from '../sheetGuard';
@@ -83,13 +84,63 @@ describe('FINANCE IA - Core Calculations & Validators', () => {
     expect(budget.savings).toBe(2000);
   });
 
-  it('detects duplicate transactions with normalized description', () => {
+  it('detects duplicate transactions with normalized description and Pix E2E externalId', () => {
     const existing: Transaction[] = [
-      { id: '1', entityId: 'CPF', accountId: 'acc-1', date: '2026-11-05', description: 'Energia  Elétrica', category: 'Moradia', account: 'A', amount: 150, direction: 'EXPENSE', status: 'CONFIRMED', origin: 'MANUAL' },
+      {
+        id: '1',
+        entityId: 'CPF',
+        accountId: 'acc-1',
+        date: '2026-11-05',
+        description: 'Energia  Elétrica',
+        category: 'Moradia',
+        account: 'A',
+        amount: 150,
+        direction: 'EXPENSE',
+        status: 'CONFIRMED',
+        origin: 'MANUAL',
+        externalId: 'E00416968202611051200ABC',
+      },
     ];
 
     expect(checkDuplicateTransaction(existing, { date: '2026-11-05', amount: 150, description: 'energia eletrica' })).toBe(true);
     expect(checkDuplicateTransaction(existing, { date: '2026-11-06', amount: 150, description: 'energia eletrica' })).toBe(false);
+    expect(
+      checkDuplicateTransaction(existing, {
+        date: '2026-11-09',
+        amount: 999,
+        description: 'Outro texto',
+        externalId: 'e00416968202611051200abc',
+      })
+    ).toBe(true);
+  });
+
+  it('detects internal transfers between user accounts automatically', () => {
+    const accounts: Account[] = [
+      { id: 'acc-1', entityId: 'CPF', institutionName: 'Banco Inter', accountName: 'Conta Corrente', accountType: 'checking', openingBalance: 0, balance: 0 },
+      { id: 'acc-3', entityId: 'CNPJ', institutionName: 'Nubank Empresa', accountName: 'Conta PJ MEI', accountType: 'business', openingBalance: 0, balance: 0 },
+    ];
+
+    expect(
+      detectInternalTransfer(
+        {
+          operationType: 'PIX',
+          originAccountHint: 'Banco Inter',
+          destinationAccountHint: 'Nubank Empresa',
+        },
+        accounts
+      )
+    ).toBe(true);
+
+    expect(
+      detectInternalTransfer(
+        {
+          operationType: 'PIX',
+          originAccountHint: 'Banco Inter',
+          destinationAccountHint: 'Padaria Central',
+        },
+        accounts
+      )
+    ).toBe(false);
   });
 
   it('validates real FEBRABAN Mod 10 and Mod 11 boleto linha digitável and rejects tampered digits', () => {

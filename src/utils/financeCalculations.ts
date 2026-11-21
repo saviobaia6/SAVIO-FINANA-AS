@@ -1,4 +1,4 @@
-import { Transaction, Account } from '../types';
+import { Transaction, Account, OperationType } from '../types';
 
 export function toCents(amount: number): number {
   return Math.round(amount * 100);
@@ -73,8 +73,19 @@ export function normalizeDescription(text: string): string {
 
 export function checkDuplicateTransaction(
   existingTransactions: Transaction[],
-  newTr: { date: string; amount: number; description: string }
+  newTr: { date: string; amount: number; description: string; externalId?: string }
 ): boolean {
+  const newExtId = newTr.externalId ? newTr.externalId.trim().toLowerCase() : '';
+  if (newExtId) {
+    const idMatch = existingTransactions.some(
+      (t) =>
+        t.status !== 'CANCELLED' &&
+        Boolean(t.externalId) &&
+        t.externalId!.trim().toLowerCase() === newExtId
+    );
+    if (idMatch) return true;
+  }
+
   const newNorm = normalizeDescription(newTr.description);
   const newCents = toCents(newTr.amount);
   return existingTransactions.some(
@@ -84,4 +95,45 @@ export function checkDuplicateTransaction(
       toCents(t.amount) === newCents &&
       normalizeDescription(t.description) === newNorm
   );
+}
+
+export function detectInternalTransfer(
+  item: {
+    operationType?: OperationType;
+    isInternalTransfer?: boolean;
+    counterparty?: string;
+    description?: string;
+    originAccountHint?: string;
+    destinationAccountHint?: string;
+  },
+  accounts: Account[]
+): boolean {
+  if (item.isInternalTransfer || item.operationType === 'TRANSFERENCIA_PROPRIA') {
+    return true;
+  }
+
+  const knownKeywords = accounts
+    .flatMap((a) => [a.institutionName, a.accountName])
+    .map(normalizeDescription)
+    .filter((k) => k.length >= 4);
+
+  const originNorm = normalizeDescription(item.originAccountHint || '');
+  const destNorm = normalizeDescription(item.destinationAccountHint || '');
+
+  if (originNorm && destNorm) {
+    const originMatches = knownKeywords.some((k) => originNorm.includes(k));
+    const destMatches = knownKeywords.some((k) => destNorm.includes(k));
+    if (originMatches && destMatches) return true;
+  }
+
+  const combined = normalizeDescription(`${item.description || ''} ${item.counterparty || ''}`);
+  if (
+    combined.includes('mesma titularidade') ||
+    combined.includes('entre contas proprias') ||
+    combined.includes('transferencia propria')
+  ) {
+    return true;
+  }
+
+  return false;
 }

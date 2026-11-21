@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Transaction, Account } from '../types';
+import {
+  Transaction,
+  Account,
+  APP_CATEGORIES,
+  OPERATION_TYPES,
+  OPERATION_TYPE_LABELS,
+  OperationType,
+} from '../types';
 import { parseCurrencyInput } from '../utils/financeCalculations';
 import { X, Check, AlertCircle } from 'lucide-react';
 
@@ -23,7 +30,10 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const [direction, setDirection] = useState<'INCOME' | 'EXPENSE'>('EXPENSE');
   const [entityId, setEntityId] = useState<'CPF' | 'CNPJ'>(defaultEntity);
   const [description, setDescription] = useState('');
-  const [category, setCategory] = useState('Salário');
+  const [category, setCategory] = useState<string>('Alimentação');
+  const [operationType, setOperationType] = useState<OperationType>('PIX');
+  const [counterparty, setCounterparty] = useState('');
+  const [externalId, setExternalId] = useState('');
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [accountId, setAccountId] = useState<string>('');
@@ -37,7 +47,14 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       setDirection(editingTransaction.direction);
       setEntityId(editingTransaction.entityId);
       setDescription(editingTransaction.description);
-      setCategory(editingTransaction.category);
+      setCategory(
+        (APP_CATEGORIES as readonly string[]).includes(editingTransaction.category)
+          ? editingTransaction.category
+          : 'Outros'
+      );
+      setOperationType(editingTransaction.operationType || 'OUTRO');
+      setCounterparty(editingTransaction.counterparty || '');
+      setExternalId(editingTransaction.externalId || '');
       setAmount(editingTransaction.amount.toFixed(2).replace('.', ','));
       setDate(editingTransaction.date);
       setAccountId(editingTransaction.accountId);
@@ -47,6 +64,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       setEntityId(defaultEntity);
       setDescription('');
       setCategory(defaultEntity === 'CNPJ' ? 'Serviço MEI' : 'Alimentação');
+      setOperationType('PIX');
+      setCounterparty('');
+      setExternalId('');
       setAmount('');
       setDate(new Date().toISOString().split('T')[0]);
       setIsInternalTransfer(false);
@@ -89,7 +109,10 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
         direction,
         status: editingTransaction?.status || 'CONFIRMED',
         origin: editingTransaction?.origin || 'MANUAL',
-        isInternalTransfer,
+        isInternalTransfer: isInternalTransfer || operationType === 'TRANSFERENCIA_PROPRIA',
+        operationType,
+        counterparty: counterparty.trim() || undefined,
+        externalId: externalId.trim() || undefined,
       },
       editingTransaction?.id
     );
@@ -158,19 +181,43 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               </div>
             </div>
 
-            <div>
-              <label htmlFor="tx-entity" className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
-                Vínculo (Titularidade)
-              </label>
-              <select
-                id="tx-entity"
-                value={entityId}
-                onChange={(e) => setEntityId(e.target.value as 'CPF' | 'CNPJ')}
-                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-base font-medium text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 outline-none focus:border-emerald-500 min-h-12"
-              >
-                <option value="CPF">CPF (Pessoal)</option>
-                <option value="CNPJ">CNPJ (MEI / Empresa)</option>
-              </select>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="tx-entity" className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                  Vínculo (Titularidade)
+                </label>
+                <select
+                  id="tx-entity"
+                  value={entityId}
+                  onChange={(e) => setEntityId(e.target.value as 'CPF' | 'CNPJ')}
+                  className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-base font-medium text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 outline-none focus:border-emerald-500 min-h-12"
+                >
+                  <option value="CPF">CPF (Pessoal)</option>
+                  <option value="CNPJ">CNPJ (MEI / Empresa)</option>
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="tx-optype" className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                  Tipo de operação
+                </label>
+                <select
+                  id="tx-optype"
+                  value={operationType}
+                  onChange={(e) => {
+                    const op = e.target.value as OperationType;
+                    setOperationType(op);
+                    if (op === 'TRANSFERENCIA_PROPRIA') setIsInternalTransfer(true);
+                  }}
+                  className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-base font-medium text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 outline-none focus:border-emerald-500 min-h-12"
+                >
+                  {OPERATION_TYPES.map((op) => (
+                    <option key={op} value={op}>
+                      {OPERATION_TYPE_LABELS[op]}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div>
@@ -199,16 +246,11 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                   onChange={(e) => setCategory(e.target.value)}
                   className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-base font-medium text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 outline-none focus:border-emerald-500 min-h-12"
                 >
-                  <option value="Salário">Salário</option>
-                  <option value="Serviço MEI">Serviço MEI</option>
-                  <option value="Moradia">Moradia</option>
-                  <option value="Alimentação">Alimentação</option>
-                  <option value="Transporte">Transporte</option>
-                  <option value="Cartão">Cartão de Crédito</option>
-                  <option value="Impostos / DAS">Impostos / DAS</option>
-                  <option value="Insumos / Produção">Insumos / Produção</option>
-                  <option value="Transferência">Transferência interna</option>
-                  <option value="Outros">Outros</option>
+                  {APP_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -260,6 +302,36 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                     </option>
                   ))}
                 </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="tx-counterparty" className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                  Pagador / Recebedor (opcional)
+                </label>
+                <input
+                  id="tx-counterparty"
+                  type="text"
+                  placeholder="Ex.: Supermercado Central"
+                  value={counterparty}
+                  onChange={(e) => setCounterparty(e.target.value)}
+                  className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 outline-none focus:border-emerald-500 min-h-12"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="tx-external-id" className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                  ID / E2E Pix (opcional)
+                </label>
+                <input
+                  id="tx-external-id"
+                  type="text"
+                  placeholder="Ex.: E000000002026..."
+                  value={externalId}
+                  onChange={(e) => setExternalId(e.target.value)}
+                  className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-mono text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 outline-none focus:border-emerald-500 min-h-12"
+                />
               </div>
             </div>
 

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Transaction } from '../types';
+import { Transaction, OPERATION_TYPE_LABELS } from '../types';
 import {
   filterTransactionsByPeriod,
   toCents,
@@ -44,7 +44,9 @@ export const CpfView: React.FC<CpfViewProps> = ({
           !q ||
           t.description.toLowerCase().includes(q) ||
           t.category.toLowerCase().includes(q) ||
-          t.account.toLowerCase().includes(q);
+          t.account.toLowerCase().includes(q) ||
+          (t.counterparty || '').toLowerCase().includes(q) ||
+          (t.externalId || '').toLowerCase().includes(q);
         const matchesCat = selectedCategory === 'ALL' || t.category === selectedCategory;
         return matchesSearch && matchesCat;
       })
@@ -190,10 +192,20 @@ export const CpfView: React.FC<CpfViewProps> = ({
                   </div>
 
                   <div className="flex items-center justify-between pt-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <span className="px-2.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-md text-xs font-medium">
                         {t.category}
                       </span>
+                      {t.operationType && (
+                        <span className="px-2 py-0.5 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 rounded-md text-[11px] font-medium">
+                          {OPERATION_TYPE_LABELS[t.operationType]}
+                        </span>
+                      )}
+                      {t.counterparty && (
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[160px]">
+                          · {t.counterparty}
+                        </span>
+                      )}
                       {t.isInternalTransfer && (
                         <span className="px-2 py-0.5 bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 rounded-md text-[11px] font-medium">
                           Transferência
@@ -247,11 +259,25 @@ export const CpfView: React.FC<CpfViewProps> = ({
                         {t.date.split('-').reverse().join('/')}
                       </td>
                       <td className="py-3.5 px-6 font-medium text-slate-800 dark:text-slate-100">
-                        {t.description}
-                        {t.isInternalTransfer && (
-                          <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
-                            Transferência
-                          </span>
+                        <div>
+                          {t.description}
+                          {t.operationType && (
+                            <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-semibold">
+                              {OPERATION_TYPE_LABELS[t.operationType]}
+                            </span>
+                          )}
+                          {t.isInternalTransfer && (
+                            <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300">
+                              Transferência
+                            </span>
+                          )}
+                        </div>
+                        {(t.counterparty || t.externalId) && (
+                          <div className="text-[11px] text-slate-400 mt-0.5">
+                            {t.counterparty && <span>{t.counterparty}</span>}
+                            {t.counterparty && t.externalId && <span> · </span>}
+                            {t.externalId && <span className="font-mono">ID: {t.externalId}</span>}
+                          </div>
                         )}
                       </td>
                       <td className="py-3.5 px-6">

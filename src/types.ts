@@ -3,6 +3,62 @@ export type Direction = 'INCOME' | 'EXPENSE';
 export type TransactionStatus = 'PLANNED' | 'PENDING' | 'CONFIRMED' | 'CANCELLED';
 export type TransactionOrigin = 'MANUAL' | 'IMPORT' | 'OPEN_FINANCE' | 'BOLETO';
 
+export const APP_CATEGORIES = [
+  'Salário',
+  'Serviço MEI',
+  'Moradia',
+  'Alimentação',
+  'Transporte',
+  'Cartão',
+  'Impostos / DAS',
+  'Insumos / Produção',
+  'Transferência',
+  'Outros',
+] as const;
+
+export type AppCategory = (typeof APP_CATEGORIES)[number];
+
+export const OPERATION_TYPES = [
+  'PIX',
+  'TED_DOC',
+  'BOLETO',
+  'CARTAO',
+  'TRANSFERENCIA_PROPRIA',
+  'SAQUE',
+  'TARIFA',
+  'OUTRO',
+] as const;
+
+export type OperationType = (typeof OPERATION_TYPES)[number];
+
+export const OPERATION_TYPE_LABELS: Record<OperationType, string> = {
+  PIX: 'Pix',
+  TED_DOC: 'TED / DOC',
+  BOLETO: 'Boleto / Guia',
+  CARTAO: 'Cartão',
+  TRANSFERENCIA_PROPRIA: 'Transferência própria',
+  SAQUE: 'Saque',
+  TARIFA: 'Tarifa / Encargo',
+  OUTRO: 'Outro',
+};
+
+export interface ExtractedDocumentTransaction {
+  description: string;
+  amount: number;
+  date: string; // YYYY-MM-DD
+  category: AppCategory;
+  entity: 'CPF' | 'CNPJ';
+  direction: Direction;
+  operationType: OperationType;
+  counterparty: string;
+  externalId: string;
+  isInternalTransfer: boolean;
+  originAccountHint?: string;
+  destinationAccountHint?: string;
+  confidence: number; // 0..1
+  confidenceNote?: string;
+}
+
 export interface Transaction {
   id: string;
   entityId: 'CPF' | 'CNPJ';
@@ -16,6 +72,9 @@ export interface Transaction {
   status: TransactionStatus;
   origin: TransactionOrigin;
   isInternalTransfer?: boolean;
+  operationType?: OperationType;
+  counterparty?: string;
+  externalId?: string;
 }
 
 export interface Account {
@@ -87,14 +146,7 @@ export interface DocumentItem {
   status: 'PENDING' | 'PROCESSED';
   previewUrl?: string;
   textContent?: string;
-  extractedData?: {
-    description?: string;
-    amount?: number;
-    date?: string;
-    category?: string;
-    entity?: 'CPF' | 'CNPJ';
-    direction?: Direction;
-  };
+  extractedTransactions?: ExtractedDocumentTransaction[];
 }
 
 export interface ChatMessage {

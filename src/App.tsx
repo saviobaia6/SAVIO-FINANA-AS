@@ -443,8 +443,9 @@ export default function App() {
             <DocumentsView
               documents={documents}
               accounts={derivedAccounts}
+              transactions={transactions}
               onAddDocument={handleAddDocument}
-              onAddTransaction={(tx) => handleSaveTransaction(tx)}
+              onAddTransactions={handleImportTransactions}
             />
           )}
 
