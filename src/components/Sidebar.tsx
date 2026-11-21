@@ -1,19 +1,19 @@
 import React from 'react';
-import { 
-  LayoutDashboard, 
-  User, 
-  Building2, 
-  Wallet, 
-  CreditCard, 
-  FileText, 
-  Receipt, 
-  PieChart, 
-  TrendingUp, 
-  ArrowUpRight, 
-  FileSearch, 
-  Bot, 
+import {
+  LayoutDashboard,
+  User,
+  Building2,
+  Wallet,
+  CreditCard,
+  FileText,
+  Receipt,
+  PieChart,
+  TrendingUp,
+  ArrowUpRight,
+  FileSearch,
+  Bot,
   Settings,
-  FolderOpen
+  FolderOpen,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -33,7 +33,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
     { id: 'planning', label: 'Planejamento 50/30/20', icon: PieChart, section: 'FINANÇAS' },
     { id: 'assets', label: 'Patrimônio e ativos', icon: TrendingUp, section: 'FINANÇAS' },
     { id: 'documents', label: 'Leitor & Scanner IA', icon: FileSearch, section: 'INTELIGÊNCIA' },
-    { id: 'imports', label: 'Extratos & Open Finance', icon: FolderOpen, section: 'INTELIGÊNCIA' },
+    { id: 'imports', label: 'Extratos & Importação', icon: FolderOpen, section: 'INTELIGÊNCIA' },
     { id: 'ai', label: 'IA Financeira', icon: Bot, section: 'INTELIGÊNCIA' },
     { id: 'reports', label: 'Relatórios gerenciais', icon: FileText, section: 'INTELIGÊNCIA' },
     { id: 'settings', label: 'Configurações', icon: Settings, section: 'SISTEMA' },
@@ -42,27 +42,27 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
   let lastSection = '';
 
   return (
-    <aside className="w-64 bg-[#14263d] text-white p-5 flex flex-col flex-shrink-0 select-none shadow-xl">
+    <aside className="w-64 bg-[#14263d] dark:bg-slate-950 text-white p-5 flex flex-col flex-shrink-0 select-none shadow-xl border-r border-slate-800/40">
       <div className="px-3 py-2 mb-2">
         <h1 className="text-xl font-extrabold tracking-wider text-white">
           FINANCE <span className="text-emerald-400">IA</span>
         </h1>
         <small className="block text-[9px] tracking-widest text-[#aebed0] uppercase mt-1">
-          Gestão Inteligente & Autônoma
+          Gestão Financeira Inteligente
         </small>
       </div>
 
-      <div className="my-3 px-3 py-3 bg-[#203a59] rounded-xl flex items-center gap-3 border border-[#2a4d75]">
+      <div className="my-3 px-3 py-3 bg-[#203a59] dark:bg-slate-900 rounded-xl flex items-center gap-3 border border-[#2a4d75] dark:border-slate-800">
         <div className="w-9 h-9 rounded-full bg-emerald-500/20 text-emerald-300 grid place-items-center font-bold text-sm">
           FA
         </div>
         <div className="overflow-hidden">
-          <p className="text-xs font-bold text-white truncate">Sócio Titular</p>
-          <small className="block text-[11px] text-[#afbdcc] truncate">CPF & CNPJ Ativos</small>
+          <p className="text-xs font-bold text-white truncate">Titular CPF & CNPJ</p>
+          <small className="block text-[11px] text-[#afbdcc] truncate">Gestão consolidada</small>
         </div>
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto pr-1 custom-scrollbar">
+      <nav className="flex-1 space-y-1 overflow-y-auto pr-1">
         {menuItems.map((item) => {
           const showSectionHeader = item.section !== lastSection;
           lastSection = item.section;
@@ -77,11 +77,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
                 </div>
               )}
               <button
+                type="button"
                 onClick={() => setCurrentTab(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-all ${
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-all cursor-pointer ${
                   isActive
                     ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/30 font-semibold'
-                    : 'text-[#d5deea] hover:bg-[#203a59] hover:text-white'
+                    : 'text-[#d5deea] hover:bg-[#203a59] dark:hover:bg-slate-900 hover:text-white'
                 }`}
               >
                 <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-[#a9bed3]'}`} />
@@ -92,9 +93,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
         })}
       </nav>
 
-      <div className="mt-4 pt-3 border-t border-[#203a59] text-[11px] text-[#9aadc1] flex items-center justify-between">
-        <span>v1.5 Pro · Supabase ready</span>
-        <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+      <div className="mt-4 pt-3 border-t border-[#203a59] dark:border-slate-800 text-[11px] text-[#9aadc1] flex items-center justify-between">
+        <span>Fase 0 · Mobile Pro</span>
+        <span className="inline-block w-2 h-2 rounded-full bg-emerald-400" />
       </div>
     </aside>
   );

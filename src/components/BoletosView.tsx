@@ -1,251 +1,696 @@
-import React, { useState } from 'react';
-import { Boleto } from '../types';
+import React, { useState, useMemo } from 'react';
+import { Boleto, Account } from '../types';
 import { calculateCountdown } from '../utils/countdown';
-import { Receipt, Check, AlertCircle, FileText, Sparkles, Plus, Search, Calendar, ShieldCheck, Clock } from 'lucide-react';
+import { validateAndParseBoleto } from '../utils/boletoValidator';
+import { parseCurrencyInput, formatCurrencyBRL } from '../utils/financeCalculations';
+import { Check, AlertCircle, Sparkles, Search, Plus, Trash2, X } from 'lucide-react';
 
 interface BoletosViewProps {
   boletos: Boleto[];
+  accounts: Account[];
   onAddBoleto: (boleto: Boleto) => void;
-  onPayBoleto: (id: string) => void;
+  onPayBoleto: (id: string, accountId?: string) => void;
+  onDeleteBoleto?: (id: string) => void;
 }
 
-export const BoletosView: React.FC<BoletosViewProps> = ({ boletos, onAddBoleto, onPayBoleto }) => {
+export const BoletosView: React.FC<BoletosViewProps> = ({
+  boletos,
+  accounts,
+  onAddBoleto,
+  onPayBoleto,
+  onDeleteBoleto,
+}) => {
+  const [entryMode, setEntryMode] = useState<'barcode' | 'manual'>('barcode');
   const [linhaInput, setLinhaInput] = useState('');
+  const [beneficiarioInput, setBeneficiarioInput] = useState('');
+  const [descricaoInput, setDescricaoInput] = useState('');
+  const [valorInput, setValorInput] = useState('');
+  const [vencimentoInput, setVencimentoInput] = useState(new Date().toISOString().split('T')[0]);
+  const [entityInput, setEntityInput] = useState<'CPF' | 'CNPJ'>('CPF');
+  const [categoryInput, setCategoryInput] = useState('Moradia');
+
   const [analyzing, setAnalyzing] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+
   const [entityFilter, setEntityFilter] = useState<'ALL' | 'CPF' | 'CNPJ'>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'PAID' | 'OVERDUE'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const handleAnalyzeBoleto = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!linhaInput.trim()) return;
+  const [payingBoleto, setPayingBoleto] = useState<Boleto | null>(null);
+  const [paymentAccountId, setPaymentAccountId] = useState<string>('');
 
-    // Check duplicate prevention
-    const exists = boletos.some(b => b.linhaDigitavel === linhaInput.trim());
-    if (exists) {
-      alert('⚠️ Alerta de Duplicidade: Este boleto já está cadastrado no sistema!');
+  const checkBarcodeDuplicate = (rawCode: string, normalizedCode: string): boolean => {
+    const cleanRaw = rawCode.replace(/\D/g, '');
+    return boletos.some((b) => {
+      const existingClean = b.linhaDigitavel.replace(/\D/g, '');
+      if (!existingClean) return false;
+      if (existingClean === cleanRaw) return true;
+      const parsedExisting = validateAndParseBoleto(existingClean);
+      return Boolean(normalizedCode && parsedExisting.normalizedBarcode === normalizedCode);
+    });
+  };
+
+  const handleAnalyzeBarcode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    const trimmed = linhaInput.trim();
+    if (!trimmed) return;
+
+    const validation = validateAndParseBoleto(trimmed);
+    if (!validation.isValid) {
+      setErrorMsg(validation.error || 'Linha digitável inválida.');
+      return;
+    }
+
+    if (checkBarcodeDuplicate(trimmed, validation.normalizedBarcode)) {
+      setErrorMsg('Alerta de duplicidade: este boleto já está cadastrado no sistema.');
       return;
     }
 
     setAnalyzing(true);
-    setSuccessMsg('');
+    let aiData: Partial<Boleto> | null = null;
 
     try {
       const res = await fetch('/api/ai/parse-boleto', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ linhaDigitavel: linhaInput })
+        body: JSON.stringify({ linhaDigitavel: trimmed }),
       });
-      const data = await res.json();
-      const parsed = data.boleto;
-
-      const newBol: Boleto = {
-        id: 'bol-' + Date.now(),
-        beneficiario: parsed.beneficiario || 'Empresa Beneficiária',
-        pagador: parsed.pagador || 'Titular FINANCE IA',
-        instituicao: parsed.instituicao || 'Banco Emissor',
-        linhaDigitavel: linhaInput.trim(),
-        vencimento: parsed.vencimento || new Date().toISOString().split('T')[0],
-        valorOriginal: parsed.valorOriginal || 150.00,
-        descricao: parsed.descricao || 'Boleto analisado e validado por IA',
-        status: 'PENDING',
-        entityId: linhaInput.startsWith('8') ? 'CNPJ' : 'CPF',
-        category: linhaInput.startsWith('8') ? 'Impostos / DAS' : 'Moradia'
-      };
-
-      onAddBoleto(newBol);
-      setLinhaInput('');
-      setSuccessMsg('Boleto interpretado, validado e classificado com sucesso!');
-    } catch (err) {
-      console.error(err);
-      alert('Erro ao analisar boleto.');
+      if (res.ok) {
+        const data = await res.json();
+        aiData = data.boleto || null;
+      }
+    } catch {
+      // AI enrichment is optional when FEBRABAN validation succeeded
     } finally {
       setAnalyzing(false);
     }
+
+    const isArrecadacao = validation.normalizedBarcode.startsWith('8');
+    const resolvedAmount =
+      validation.amount > 0 ? validation.amount : parseCurrencyInput(valorInput) || aiData?.valorOriginal || 0;
+
+    if (resolvedAmount <= 0) {
+      setErrorMsg(
+        'Código validado matematicamente, mas sem valor embutido. Informe o valor no campo abaixo ou cadastre na aba Manual.'
+      );
+      setValorInput('');
+      setVencimentoInput(validation.dueDate || vencimentoInput);
+      setEntryMode('manual');
+      return;
+    }
+
+    const newBol: Boleto = {
+      id: 'bol-' + Date.now(),
+      beneficiario:
+        beneficiarioInput.trim() || aiData?.beneficiario || (isArrecadacao ? 'Arrecadação / Concessionária' : 'Título Bancário'),
+      pagador: aiData?.pagador || (isArrecadacao ? 'CNPJ / Titular' : 'Titular CPF'),
+      instituicao: aiData?.instituicao || 'Emissor FEBRABAN',
+      linhaDigitavel: validation.normalizedBarcode,
+      vencimento: validation.dueDate || aiData?.vencimento || vencimentoInput,
+      valorOriginal: resolvedAmount,
+      descricao: descricaoInput.trim() || aiData?.descricao || 'Boleto validado por código FEBRABAN',
+      status: 'PENDING',
+      entityId: aiData?.entityId || (isArrecadacao ? 'CNPJ' : entityInput),
+      category: isArrecadacao ? 'Impostos / DAS' : categoryInput,
+    };
+
+    onAddBoleto(newBol);
+    setLinhaInput('');
+    setBeneficiarioInput('');
+    setDescricaoInput('');
+    setSuccessMsg(
+      `Boleto válido adicionado! Valor R$ ${formatCurrencyBRL(newBol.valorOriginal)} · Vencimento ${newBol.vencimento
+        .split('-')
+        .reverse()
+        .join('/')}.`
+    );
   };
 
-  const filteredBoletos = boletos.filter(b => {
-    const countdown = calculateCountdown(b.vencimento, b.status === 'PAID');
-    const matchesEntity = entityFilter === 'ALL' || b.entityId === entityFilter;
-    const matchesStatus = statusFilter === 'ALL' || 
-                          (statusFilter === 'PAID' && b.status === 'PAID') ||
-                          (statusFilter === 'PENDING' && b.status === 'PENDING') ||
-                          (statusFilter === 'OVERDUE' && countdown.status === 'OVERDUE');
-    const matchesSearch = b.beneficiario.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          b.descricao.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesEntity && matchesStatus && matchesSearch;
-  });
+  const handleManualSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+    setSuccessMsg('');
 
-  return (
-    <div className="space-y-6 animate-fadeIn pb-20 md:pb-6">
-      <div>
-        <div className="flex items-center gap-2 mb-1">
-          <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md text-[10px] font-bold">DDA & OPEN FINANCE</span>
-          <h2 className="text-2xl font-extrabold text-[#14263d]">BOLETOS E COBRANÇAS IDENTIFICADOS</h2>
+    const parsedValue = parseCurrencyInput(valorInput);
+    if (!beneficiarioInput.trim()) {
+      setErrorMsg('Informe o nome do beneficiário.');
+      return;
+    }
+    if (isNaN(parsedValue) || parsedValue <= 0) {
+      setErrorMsg('Informe um valor válido maior que zero.');
+      return;
+    }
+
+    const cleanCode = linhaInput.replace(/\D/g, '');
+    if (cleanCode) {
+      const check = validateAndParseBoleto(cleanCode);
+      if (!check.isValid) {
+        setErrorMsg(check.error || 'A linha digitável informada é inválida.');
+        return;
+      }
+      if (checkBarcodeDuplicate(cleanCode, check.normalizedBarcode)) {
+        setErrorMsg('Alerta de duplicidade: este código de barras já está cadastrado.');
+        return;
+      }
+    }
+
+    const newBol: Boleto = {
+      id: 'bol-' + Date.now(),
+      beneficiario: beneficiarioInput.trim(),
+      pagador: entityInput === 'CNPJ' ? 'CNPJ MEI' : 'Titular CPF',
+      instituicao: 'Cadastro manual',
+      linhaDigitavel: cleanCode,
+      vencimento: vencimentoInput,
+      valorOriginal: parsedValue,
+      descricao: descricaoInput.trim() || beneficiarioInput.trim(),
+      status: 'PENDING',
+      entityId: entityInput,
+      category: categoryInput,
+    };
+
+    onAddBoleto(newBol);
+    setBeneficiarioInput('');
+    setDescricaoInput('');
+    setValorInput('');
+    setLinhaInput('');
+    setSuccessMsg('Conta / boleto cadastrado com sucesso!');
+  };
+
+  const filteredBoletos = useMemo(() => {
+    return boletos.filter((b) => {
+      const countdown = calculateCountdown(b.vencimento, b.status === 'PAID');
+      const matchesEntity = entityFilter === 'ALL' || b.entityId === entityFilter;
+      const matchesStatus =
+        statusFilter === 'ALL' ||
+        (statusFilter === 'PAID' && b.status === 'PAID') ||
+        (statusFilter === 'PENDING' && b.status === 'PENDING') ||
+        (statusFilter === 'OVERDUE' && countdown.status === 'OVERDUE');
+      const q = searchQuery.trim().toLowerCase();
+      const matchesSearch =
+        !q ||
+        b.beneficiario.toLowerCase().includes(q) ||
+        b.descricao.toLowerCase().includes(q);
+      return matchesEntity && matchesStatus && matchesSearch;
+    });
+  }, [boletos, entityFilter, statusFilter, searchQuery]);
+
+  const grouped = useMemo(() => {
+    const overdue: Boleto[] = [];
+    const upcoming: Boleto[] = [];
+    const future: Boleto[] = [];
+    const paid: Boleto[] = [];
+
+    filteredBoletos.forEach((b) => {
+      if (b.status === 'PAID') {
+        paid.push(b);
+        return;
+      }
+      const c = calculateCountdown(b.vencimento, false);
+      if (c.status === 'OVERDUE') overdue.push(b);
+      else if (c.status === 'DUE_TODAY' || c.status === 'UPCOMING') upcoming.push(b);
+      else future.push(b);
+    });
+
+    return {
+      overdue: overdue.sort((a, b) => a.vencimento.localeCompare(b.vencimento)),
+      upcoming: upcoming.sort((a, b) => a.vencimento.localeCompare(b.vencimento)),
+      future: future.sort((a, b) => a.vencimento.localeCompare(b.vencimento)),
+      paid: paid.sort((a, b) => b.vencimento.localeCompare(a.vencimento)),
+    };
+  }, [filteredBoletos]);
+
+  const openPaymentConfirm = (b: Boleto) => {
+    const preferred = accounts.find((a) => a.entityId === b.entityId) || accounts[0];
+    setPaymentAccountId(preferred?.id || '');
+    setPayingBoleto(b);
+  };
+
+  const confirmPayment = () => {
+    if (!payingBoleto) return;
+    onPayBoleto(payingBoleto.id, paymentAccountId || undefined);
+    setSuccessMsg(
+      `Pagamento de "${payingBoleto.beneficiario}" registrado${
+        paymentAccountId ? ' com lançamento automático na conta selecionada.' : '.'
+      }`
+    );
+    setPayingBoleto(null);
+  };
+
+  const renderGroup = (title: string, items: Boleto[], accentClass: string) => {
+    if (items.length === 0) return null;
+    return (
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          <h3 className={`text-sm font-bold ${accentClass}`}>{title}</h3>
+          <span className="text-xs text-slate-400">{items.length} item(ns)</span>
         </div>
-        <p className="text-xs text-slate-500">
-          Localizador inteligente de cobranças associadas ao CPF e CNPJ com contador regressivo em tempo real.
-        </p>
-      </div>
 
-      {successMsg && (
-        <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl text-xs font-semibold flex items-center gap-2 animate-fadeIn">
-          <Check className="w-4 h-4 text-emerald-600" /> {successMsg}
-        </div>
-      )}
+        {/* Mobile Cards */}
+        <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800">
+          {items.map((b) => {
+            const countdown = calculateCountdown(b.vencimento, b.status === 'PAID');
+            return (
+              <div key={b.id} className="p-4 space-y-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-bold text-sm text-slate-900 dark:text-white truncate">
+                      {b.beneficiario}
+                    </div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                      {b.descricao}
+                    </div>
+                  </div>
+                  <div className="text-sm font-extrabold text-slate-900 dark:text-white shrink-0">
+                    R$ {formatCurrencyBRL(b.valorOriginal)}
+                  </div>
+                </div>
 
-      {/* Analyzer Input Card */}
-      <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-xs space-y-4">
-        <h3 className="text-sm font-bold text-[#14263d] flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-emerald-600" /> Localizador & Leitor de Linha Digitável
-        </h3>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-0.5 rounded text-xs font-semibold border ${countdown.badgeColor}`}>
+                      {countdown.shortLabel}
+                    </span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      {b.vencimento.split('-').reverse().join('/')}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                      {b.entityId}
+                    </span>
+                  </div>
 
-        <form onSubmit={handleAnalyzeBoleto} className="space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1">Linha digitável do boleto / Código de barras</label>
-            <input
-              type="text"
-              required
-              placeholder="Ex.: 23793.38128 60000.123456 78901.234567 1 89120000015000"
-              value={linhaInput}
-              onChange={(e) => setLinhaInput(e.target.value)}
-              className="w-full border border-slate-200 rounded-xl px-4 py-3 text-xs font-mono text-slate-800 outline-none focus:border-emerald-500 bg-slate-50/50"
-            />
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <span className="text-[11px] text-slate-400">
-              💡 Prevenção automática de duplicidade ativa por código de barras.
-            </span>
-            <button
-              type="submit"
-              disabled={analyzing}
-              className="bg-[#14263d] hover:bg-[#1d3552] text-white px-6 py-2.5 rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-2 cursor-pointer"
-            >
-              {analyzing ? 'Analisando boleto com IA...' : 'Localizar e Adicionar Boleto'}
-            </button>
-          </div>
-        </form>
-      </div>
-
-      {/* Toolbar filters */}
-      <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-xs flex flex-wrap items-center gap-4">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Buscar por beneficiário ou descrição..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-xl text-xs outline-none bg-slate-50/50 focus:border-emerald-500"
-          />
-        </div>
-
-        <div className="flex items-center gap-2">
-          <select
-            value={entityFilter}
-            onChange={(e) => setEntityFilter(e.target.value as any)}
-            className="border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 bg-white outline-none"
-          >
-            <option value="ALL">Todos os Vínculos (CPF/CNPJ)</option>
-            <option value="CPF">Apenas CPF</option>
-            <option value="CNPJ">Apenas CNPJ</option>
-          </select>
-
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as any)}
-            className="border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 bg-white outline-none"
-          >
-            <option value="ALL">Todas as Situações</option>
-            <option value="PENDING">Pendentes</option>
-            <option value="OVERDUE">Vencidas</option>
-            <option value="PAID">Pagas</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Boletos List with Countdowns */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-          <h3 className="text-sm font-bold text-[#14263d]">Lista de Cobranças Identificadas</h3>
-          <span className="text-xs text-slate-400">{filteredBoletos.length} itens</span>
+                  <div className="flex items-center gap-2">
+                    {b.status === 'PENDING' && (
+                      <button
+                        type="button"
+                        onClick={() => openPaymentConfirm(b)}
+                        className="px-3 min-h-10 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold cursor-pointer"
+                      >
+                        Pagar
+                      </button>
+                    )}
+                    {onDeleteBoleto && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm(`Remover "${b.beneficiario}"?`)) onDeleteBoleto(b.id);
+                        }}
+                        className="min-w-10 min-h-10 grid place-items-center text-slate-400 hover:text-red-600 cursor-pointer"
+                        aria-label={`Remover ${b.beneficiario}`}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Desktop Table */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-xs text-left">
             <thead>
-              <tr className="bg-slate-50 text-slate-400 border-b border-slate-100">
+              <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-400 border-b border-slate-100 dark:border-slate-800">
                 <th className="py-3 px-6 font-semibold">Beneficiário / Descrição</th>
                 <th className="py-3 px-6 font-semibold">Vínculo</th>
                 <th className="py-3 px-6 font-semibold">Vencimento & Contador</th>
                 <th className="py-3 px-6 font-semibold text-right">Valor Original</th>
-                <th className="py-3 px-6 font-semibold text-center">Situação</th>
                 <th className="py-3 px-6 font-semibold text-center">Ações</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredBoletos.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="py-8 text-center text-slate-400">
-                    Nenhum boleto encontrado com os filtros selecionados.
-                  </td>
-                </tr>
-              ) : (
-                filteredBoletos.map(b => {
-                  const countdown = calculateCountdown(b.vencimento, b.status === 'PAID');
-                  return (
-                    <tr key={b.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="py-4 px-6">
-                        <div className="font-bold text-slate-800">{b.beneficiario}</div>
-                        <small className="text-slate-400">{b.descricao}</small>
-                      </td>
-                      <td className="py-4 px-6">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                          b.entityId === 'CPF' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'
-                        }`}>
-                          {b.entityId}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6">
-                        <div className="font-semibold text-slate-800">{b.vencimento.split('-').reverse().join('/')}</div>
-                        <span className={`inline-block mt-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${countdown.badgeColor}`}>
-                          ⏱ {countdown.label}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6 text-right font-extrabold text-slate-900">
-                        R$ {b.valorOriginal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="py-4 px-6 text-center">
-                        <span className={`px-2.5 py-1 rounded-md text-[10px] font-bold ${
-                          b.status === 'PAID'
-                            ? 'bg-emerald-50 text-emerald-700'
-                            : countdown.status === 'OVERDUE'
-                            ? 'bg-red-50 text-red-700'
-                            : 'bg-amber-50 text-amber-700'
-                        }`}>
-                          {b.status === 'PAID' ? 'Pago' : countdown.status === 'OVERDUE' ? 'Vencido' : 'A Vencer'}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6 text-center">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {items.map((b) => {
+                const countdown = calculateCountdown(b.vencimento, b.status === 'PAID');
+                return (
+                  <tr key={b.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                    <td className="py-4 px-6">
+                      <div className="font-bold text-slate-800 dark:text-white">{b.beneficiario}</div>
+                      <small className="text-slate-400">{b.descricao}</small>
+                    </td>
+                    <td className="py-4 px-6">
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          b.entityId === 'CPF'
+                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                            : 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
+                        }`}
+                      >
+                        {b.entityId}
+                      </span>
+                    </td>
+                    <td className="py-4 px-6">
+                      <div className="font-semibold text-slate-800 dark:text-slate-200">
+                        {b.vencimento.split('-').reverse().join('/')}
+                      </div>
+                      <span className={`inline-block mt-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${countdown.badgeColor}`}>
+                        {countdown.label}
+                      </span>
+                    </td>
+                    <td className="py-4 px-6 text-right font-extrabold text-slate-900 dark:text-white">
+                      R$ {formatCurrencyBRL(b.valorOriginal)}
+                    </td>
+                    <td className="py-4 px-6 text-center">
+                      <div className="inline-flex items-center gap-2">
                         {b.status === 'PENDING' && (
                           <button
-                            onClick={() => onPayBoleto(b.id)}
+                            type="button"
+                            onClick={() => openPaymentConfirm(b)}
                             className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer"
                           >
                             Marcar como Pago
                           </button>
                         )}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
+                        {onDeleteBoleto && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm(`Remover "${b.beneficiario}"?`)) onDeleteBoleto(b.id);
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg cursor-pointer"
+                            title="Excluir"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </div>
+    );
+  };
+
+  return (
+    <div className="space-y-6 animate-fadeIn">
+      <div>
+        <div className="flex items-center gap-2 mb-1">
+          <span className="px-2 py-0.5 bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 rounded-md text-[10px] font-bold">
+            VALIDAÇÃO FEBRABAN MOD 10/11
+          </span>
+          <h2 className="text-xl sm:text-2xl font-extrabold text-[#14263d] dark:text-white">
+            Boletos e Contas a Pagar
+          </h2>
+        </div>
+        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+          Validação matemática real de código de barras (44, 47 e 48 dígitos), prevenção de duplicidade e controle por vencimento.
+        </p>
+      </div>
+
+      {successMsg && (
+        <div className="p-4 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 rounded-2xl text-xs sm:text-sm font-semibold flex items-center gap-2">
+          <Check className="w-4 h-4 shrink-0" />
+          <span>{successMsg}</span>
+        </div>
+      )}
+
+      {errorMsg && (
+        <div className="p-4 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-2xl text-xs sm:text-sm font-semibold flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
+
+      {/* Entry Card */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 rounded-2xl shadow-xs space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-bold text-[#14263d] dark:text-white flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-emerald-600" /> Adicionar Boleto ou Conta a Pagar
+          </h3>
+
+          <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+            <button
+              type="button"
+              onClick={() => setEntryMode('barcode')}
+              className={`px-3 min-h-9 rounded-lg text-xs font-semibold cursor-pointer ${
+                entryMode === 'barcode'
+                  ? 'bg-white dark:bg-slate-900 text-[#14263d] dark:text-white shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400'
+              }`}
+            >
+              Linha digitável
+            </button>
+            <button
+              type="button"
+              onClick={() => setEntryMode('manual')}
+              className={`px-3 min-h-9 rounded-lg text-xs font-semibold cursor-pointer ${
+                entryMode === 'manual'
+                  ? 'bg-white dark:bg-slate-900 text-[#14263d] dark:text-white shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400'
+              }`}
+            >
+              Cadastro manual
+            </button>
+          </div>
+        </div>
+
+        {entryMode === 'barcode' ? (
+          <form onSubmit={handleAnalyzeBarcode} className="space-y-4">
+            <div>
+              <label htmlFor="bol-linha" className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                Linha digitável ou código de barras (44, 47 ou 48 dígitos)
+              </label>
+              <input
+                id="bol-linha"
+                type="text"
+                required
+                placeholder="Digite ou cole os dígitos do boleto"
+                value={linhaInput}
+                onChange={(e) => setLinhaInput(e.target.value)}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-mono text-slate-800 dark:text-white outline-none focus:border-emerald-500 bg-slate-50/50 dark:bg-slate-800 min-h-12"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <input
+                type="text"
+                placeholder="Beneficiário (opcional — ex.: Enel, Condomínio)"
+                value={beneficiarioInput}
+                onChange={(e) => setBeneficiarioInput(e.target.value)}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-800 dark:text-white bg-white dark:bg-slate-800 outline-none focus:border-emerald-500 min-h-12"
+              />
+              <select
+                aria-label="Vínculo do boleto"
+                value={entityInput}
+                onChange={(e) => setEntityInput(e.target.value as 'CPF' | 'CNPJ')}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-800 dark:text-white bg-white dark:bg-slate-800 outline-none focus:border-emerald-500 min-h-12"
+              >
+                <option value="CPF">Vínculo CPF (Pessoal)</option>
+                <option value="CNPJ">Vínculo CNPJ (Empresa)</option>
+              </select>
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                Validação matemática Módulo 10/11 e deduplicação automática por código normalizado.
+              </span>
+              <button
+                type="submit"
+                disabled={analyzing}
+                className="bg-[#14263d] hover:bg-[#1d3552] dark:bg-emerald-600 dark:hover:bg-emerald-700 text-white px-6 min-h-12 rounded-xl text-sm font-bold shadow-sm transition-all cursor-pointer shrink-0"
+              >
+                {analyzing ? 'Validando boleto...' : 'Validar e Adicionar Boleto'}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={handleManualSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <input
+                type="text"
+                required
+                placeholder="Beneficiário (ex.: Aluguel, Fornecedor)"
+                value={beneficiarioInput}
+                onChange={(e) => setBeneficiarioInput(e.target.value)}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-800 dark:text-white bg-white dark:bg-slate-800 outline-none focus:border-emerald-500 min-h-12"
+              />
+              <input
+                type="text"
+                inputMode="decimal"
+                required
+                placeholder="Valor R$ (ex.: 250,00)"
+                value={valorInput}
+                onChange={(e) => setValorInput(e.target.value)}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-800 dark:text-white bg-white dark:bg-slate-800 outline-none focus:border-emerald-500 min-h-12"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <input
+                type="date"
+                required
+                value={vencimentoInput}
+                onChange={(e) => setVencimentoInput(e.target.value)}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-800 dark:text-white bg-white dark:bg-slate-800 outline-none focus:border-emerald-500 min-h-12"
+              />
+              <select
+                value={entityInput}
+                onChange={(e) => setEntityInput(e.target.value as 'CPF' | 'CNPJ')}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-800 dark:text-white bg-white dark:bg-slate-800 outline-none focus:border-emerald-500 min-h-12"
+              >
+                <option value="CPF">CPF (Pessoal)</option>
+                <option value="CNPJ">CNPJ (Empresa)</option>
+              </select>
+              <select
+                value={categoryInput}
+                onChange={(e) => setCategoryInput(e.target.value)}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-800 dark:text-white bg-white dark:bg-slate-800 outline-none focus:border-emerald-500 min-h-12"
+              >
+                <option value="Moradia">Moradia</option>
+                <option value="Impostos / DAS">Impostos / DAS</option>
+                <option value="Insumos / Produção">Insumos / Produção</option>
+                <option value="Cartão">Cartão</option>
+                <option value="Outros">Outros</option>
+              </select>
+            </div>
+
+            <input
+              type="text"
+              placeholder="Descrição ou código de barras (opcional)"
+              value={descricaoInput}
+              onChange={(e) => setDescricaoInput(e.target.value)}
+              className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-800 dark:text-white bg-white dark:bg-slate-800 outline-none focus:border-emerald-500 min-h-12"
+            />
+
+            <button
+              type="submit"
+              className="w-full sm:w-auto bg-[#14263d] hover:bg-[#1d3552] dark:bg-emerald-600 dark:hover:bg-emerald-700 text-white px-6 min-h-12 rounded-xl text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Plus size={16} /> Salvar Conta a Pagar
+            </button>
+          </form>
+        )}
+      </div>
+
+      {/* Filters */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Buscar por beneficiário ou descrição..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-10 pr-4 py-2.5 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none bg-slate-50/50 dark:bg-slate-800 dark:text-white focus:border-emerald-500 min-h-12"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 sm:flex items-center gap-2">
+          <select
+            aria-label="Filtrar vínculo"
+            value={entityFilter}
+            onChange={(e) => setEntityFilter(e.target.value as 'ALL' | 'CPF' | 'CNPJ')}
+            className="border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 outline-none min-h-12"
+          >
+            <option value="ALL">CPF e CNPJ</option>
+            <option value="CPF">Apenas CPF</option>
+            <option value="CNPJ">Apenas CNPJ</option>
+          </select>
+
+          <select
+            aria-label="Filtrar situação"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as 'ALL' | 'PENDING' | 'PAID' | 'OVERDUE')}
+            className="border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 outline-none min-h-12"
+          >
+            <option value="ALL">Todas situações</option>
+            <option value="PENDING">Pendentes</option>
+            <option value="OVERDUE">Vencidos</option>
+            <option value="PAID">Pagos</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Grouped Lists */}
+      {filteredBoletos.length === 0 ? (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center text-sm text-slate-500 dark:text-slate-400">
+          Nenhum boleto encontrado com os filtros selecionados.
+        </div>
+      ) : (
+        <div className="space-y-5">
+          {renderGroup('1. Boletos Vencidos', grouped.overdue, 'text-red-700 dark:text-red-400')}
+          {renderGroup('2. Próximos do Vencimento (Hoje até 3 dias)', grouped.upcoming, 'text-amber-700 dark:text-amber-400')}
+          {renderGroup('3. Boletos Futuros', grouped.future, 'text-[#14263d] dark:text-white')}
+          {renderGroup('4. Boletos Pagos', grouped.paid, 'text-emerald-700 dark:text-emerald-400')}
+        </div>
+      )}
+
+      {/* Payment Confirmation Modal */}
+      {payingBoleto && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-end md:items-center justify-center">
+          <div
+            className="bg-white dark:bg-slate-900 w-full md:max-w-md rounded-t-3xl md:rounded-2xl p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-[#14263d] dark:text-white">Confirmar pagamento</h3>
+              <button
+                type="button"
+                onClick={() => setPayingBoleto(null)}
+                className="min-w-10 min-h-10 grid place-items-center text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
+                aria-label="Fechar"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 text-xs space-y-1">
+              <div className="font-bold text-slate-900 dark:text-white">{payingBoleto.beneficiario}</div>
+              <div className="text-slate-500 dark:text-slate-400">
+                Valor: <strong className="text-emerald-700 dark:text-emerald-400">R$ {formatCurrencyBRL(payingBoleto.valorOriginal)}</strong>
+              </div>
+              <div className="text-slate-500 dark:text-slate-400">
+                Vencimento: {payingBoleto.vencimento.split('-').reverse().join('/')}
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="pay-account" className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                Debitar saldo e lançar despesa na conta:
+              </label>
+              <select
+                id="pay-account"
+                value={paymentAccountId}
+                onChange={(e) => setPaymentAccountId(e.target.value)}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-white min-h-12"
+              >
+                <option value="">Apenas marcar como pago (sem lançar na conta)</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.institutionName} · {a.accountName} ({a.entityId})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setPayingBoleto(null)}
+                className="flex-1 min-h-12 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmPayment}
+                className="flex-[1.5] min-h-12 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold cursor-pointer"
+              >
+                Confirmar baixa
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

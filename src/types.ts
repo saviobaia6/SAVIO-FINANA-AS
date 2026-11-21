@@ -6,6 +6,7 @@ export type TransactionOrigin = 'MANUAL' | 'IMPORT' | 'OPEN_FINANCE' | 'BOLETO';
 export interface Transaction {
   id: string;
   entityId: 'CPF' | 'CNPJ';
+  accountId: string;
   date: string; // YYYY-MM-DD
   description: string;
   category: string;
@@ -14,6 +15,7 @@ export interface Transaction {
   direction: Direction;
   status: TransactionStatus;
   origin: TransactionOrigin;
+  isInternalTransfer?: boolean;
 }
 
 export interface Account {
@@ -23,7 +25,7 @@ export interface Account {
   accountName: string;
   accountType: 'checking' | 'savings' | 'business' | 'investment';
   balance: number;
-  openingBalance?: number;
+  openingBalance: number;
 }
 
 export interface CreditCard {
@@ -45,12 +47,13 @@ export interface Boleto {
   pagador: string;
   instituicao: string;
   linhaDigitavel: string;
-  vencimento: string;
+  vencimento: string; // YYYY-MM-DD
   valorOriginal: number;
   descricao: string;
   status: 'PENDING' | 'PAID';
   entityId: 'CPF' | 'CNPJ';
   category: string;
+  paidAt?: string;
 }
 
 export interface Debt {
@@ -78,11 +81,20 @@ export interface Asset {
 export interface DocumentItem {
   id: string;
   name: string;
-  type: string;
+  type: 'PDF' | 'EPUB' | 'Imagem';
   date: string;
   size: string;
   status: 'PENDING' | 'PROCESSED';
-  extractedData?: any;
+  previewUrl?: string;
+  textContent?: string;
+  extractedData?: {
+    description?: string;
+    amount?: number;
+    date?: string;
+    category?: string;
+    entity?: 'CPF' | 'CNPJ';
+    direction?: Direction;
+  };
 }
 
 export interface ChatMessage {

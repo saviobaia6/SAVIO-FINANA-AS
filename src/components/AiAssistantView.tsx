@@ -1,110 +1,187 @@
 import React, { useState } from 'react';
-import { Transaction, Boleto, Account, Debt, ChatMessage } from '../types';
-import { Bot, Send, User, Sparkles, HelpCircle } from 'lucide-react';
+import { Transaction, Boleto, Account, Debt, CreditCard, EntityScope, ChatMessage } from '../types';
+import { filterTransactionsByPeriod, toCents, fromCents } from '../utils/financeCalculations';
+import { calculateCountdown } from '../utils/countdown';
+import { Bot, Send, User, Sparkles } from 'lucide-react';
 
 interface AiAssistantViewProps {
   transactions: Transaction[];
   boletos: Boleto[];
   accounts: Account[];
+  cards: CreditCard[];
   debts: Debt[];
+  scope: EntityScope;
+  period: string;
 }
 
 export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
   transactions,
   boletos,
   accounts,
-  debts
+  cards,
+  debts,
+  scope,
+  period,
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'msg-1',
       sender: 'ai',
-      text: 'Olá! Sou a inteligência artificial do FINANCE IA. Analisei seus registros financeiros pessoais (CPF) e empresariais (CNPJ). Como posso ajudar na sua gestão hoje?',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    }
+      text: 'Olá! Sou o assistente financeiro do FINANCE IA. Posso responder com base nos totais reais do período selecionado (CPF e CNPJ). Em que posso ajudar?',
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    },
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
 
   const suggestedQuestions = [
-    'Quanto gastei neste mês?',
+    'Quanto gastei neste período?',
     'Quais boletos estão próximos do vencimento?',
     'Quanto o MEI faturou até agora?',
-    'Qual cartão possui a maior fatura em aberto?',
-    'Quanto tenho de despesas no meu CPF?'
+    'Qual cartão tem maior fatura?',
+    'Qual meu saldo em contas?',
   ];
 
+  const buildSummaryContext = () => {
+    const activeTrs = filterTransactionsByPeriod(
+      transactions.filter((t) => t.status !== 'CANCELLED' && !t.isInternalTransfer),
+      period
+    );
+
+    const scopedTrs = activeTrs.filter((t) => (scope === 'CONSOLIDATED' ? true : t.entityId === scope));
+    const sumBy = (list: Transaction[], dir: 'INCOME' | 'EXPENSE') =>
+      fromCents(list.filter((t) => t.direction === dir).reduce((a, t) => a + toCents(t.amount), 0));
+
+    const totalIncome = sumBy(scopedTrs, 'INCOME');
+    const totalExpense = sumBy(scopedTrs, 'EXPENSE');
+
+    const cpfTrs = activeTrs.filter((t) => t.entityId === 'CPF');
+    const cnpjTrs = activeTrs.filter((t) => t.entityId === 'CNPJ');
+
+    const totalBalance = fromCents(
+      accounts
+        .filter((a) => (scope === 'CONSOLIDATED' ? true : a.entityId === scope))
+        .reduce((a, acc) => a + toCents(acc.balance), 0)
+    );
+
+    const pendingBoletos = boletos.filter((b) => b.status === 'PENDING');
+    const overdueCount = pendingBoletos.filter(
+      (b) => calculateCountdown(b.vencimento, false).status === 'OVERDUE'
+    ).length;
+
+    const catMap = new Map<string, number>();
+    scopedTrs
+      .filter((t) => t.direction === 'EXPENSE')
+      .forEach((t) => catMap.set(t.category, (catMap.get(t.category) || 0) + toCents(t.amount)));
+
+    const topExpenseCategories = Array.from(catMap.entries())
+      .map(([category, cents]) => ({ category, total: fromCents(cents) }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+
+    return {
+      period,
+      scope,
+      totalBalance,
+      totalIncome,
+      totalExpense,
+      netResult: fromCents(toCents(totalIncome) - toCents(totalExpense)),
+      cpfIncome: sumBy(cpfTrs, 'INCOME'),
+      cpfExpense: sumBy(cpfTrs, 'EXPENSE'),
+      cnpjIncome: sumBy(cnpjTrs, 'INCOME'),
+      cnpjExpense: sumBy(cnpjTrs, 'EXPENSE'),
+      pendingBoletosCount: pendingBoletos.length,
+      pendingBoletosTotal: fromCents(pendingBoletos.reduce((a, b) => a + toCents(b.valorOriginal), 0)),
+      overdueBoletosCount: overdueCount,
+      topExpenseCategories,
+      upcomingBoletos: pendingBoletos.slice(0, 5).map((b) => ({
+        beneficiary: b.beneficiario,
+        dueDate: b.vencimento,
+        amount: b.valorOriginal,
+        entity: b.entityId,
+      })),
+      cardsSummary: cards.map((c) => ({
+        cardName: c.cardName,
+        entity: c.entityId,
+        currentInvoice: c.currentInvoiceAmount,
+        limit: c.limit,
+      })),
+      totalDebt: fromCents(debts.reduce((a, d) => a + toCents(d.outstandingAmount), 0)),
+    };
+  };
+
   const handleSend = async (questionText?: string) => {
-    const query = questionText || input;
-    if (!query.trim()) return;
+    const query = (questionText ?? input).trim();
+    if (!query || loading) return;
 
     const userMsg: ChatMessage = {
       id: 'msg-' + Date.now(),
       sender: 'user',
       text: query,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
-    setMessages(prev => [...prev, userMsg]);
+    setMessages((prev) => [...prev, userMsg]);
     if (!questionText) setInput('');
     setLoading(true);
 
     try {
-      const financialState = {
-        transactions,
-        boletos,
-        accounts,
-        debts
-      };
-
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: query, financialState })
+        body: JSON.stringify({
+          prompt: query,
+          summaryContext: buildSummaryContext(),
+        }),
       });
       const data = await res.json();
 
       const aiMsg: ChatMessage = {
         id: 'msg-' + (Date.now() + 1),
         sender: 'ai',
-        text: data.reply || 'Não foi possível gerar uma resposta no momento.',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        text: res.ok
+          ? data.reply || 'Não foi possível gerar uma resposta.'
+          : data.error || 'Serviço de IA indisponível no momento.',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
-      setMessages(prev => [...prev, aiMsg]);
-    } catch (err) {
-      console.error(err);
+      setMessages((prev) => [...prev, aiMsg]);
+    } catch {
       const errorMsg: ChatMessage = {
         id: 'msg-' + (Date.now() + 1),
         sender: 'ai',
-        text: 'Ocorreu um erro ao conectar com o serviço de inteligência artificial.',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        text: 'Erro de rede ao conectar com o serviço de inteligência artificial.',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
-      setMessages(prev => [...prev, errorMsg]);
+      setMessages((prev) => [...prev, errorMsg]);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="space-y-6 animate-fadeIn h-[calc(100vh-140px)] flex flex-col">
+    <div className="space-y-4 animate-fadeIn h-[calc(100dvh-210px)] md:h-[calc(100dvh-160px)] flex flex-col">
       <div>
         <div className="flex items-center gap-2 mb-1">
-          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md text-[10px] font-bold">GEMINI 2.5</span>
-          <h2 className="text-2xl font-extrabold text-[#14263d]">Inteligência Artificial Financeira</h2>
+          <span className="px-2 py-0.5 bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 rounded-md text-[10px] font-bold">
+            GEMINI IA
+          </span>
+          <h2 className="text-xl sm:text-2xl font-extrabold text-[#14263d] dark:text-white">
+            Inteligência Artificial Financeira
+          </h2>
         </div>
-        <p className="text-xs text-slate-500">
-          Faça perguntas sobre suas finanças, solicite análises de gastos e orientações fundamentadas nos seus dados reais.
+        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+          Análises fundamentadas exclusivamente nos seus totais agregados reais ({period}, {scope}).
         </p>
       </div>
 
       {/* Suggested Chips */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-2">
-        <span className="text-[11px] font-semibold text-slate-400 shrink-0">Sugestões:</span>
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 shrink-0">
         {suggestedQuestions.map((q, idx) => (
           <button
             key={idx}
+            type="button"
             onClick={() => handleSend(q)}
-            className="px-3 py-1.5 bg-white border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/30 text-slate-700 rounded-full text-xs font-medium whitespace-nowrap shadow-xs transition-all"
+            className="px-3.5 min-h-10 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 text-slate-700 dark:text-slate-200 rounded-full text-xs font-medium whitespace-nowrap shadow-xs transition-all cursor-pointer"
           >
             {q}
           </button>
@@ -112,57 +189,69 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
       </div>
 
       {/* Chat Messages Box */}
-      <div className="flex-1 bg-white border border-slate-200 rounded-2xl shadow-xs p-6 overflow-y-auto space-y-4">
-        {messages.map(m => (
+      <div className="flex-1 min-h-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs p-4 sm:p-6 overflow-y-auto space-y-4">
+        {messages.map((m) => (
           <div
             key={m.id}
-            className={`flex items-start gap-3 ${m.sender === 'user' ? 'flex-row-reverse' : ''}`}
+            className={`flex items-start gap-2.5 sm:gap-3 ${m.sender === 'user' ? 'flex-row-reverse' : ''}`}
           >
-            <div className={`w-9 h-9 rounded-xl grid place-items-center text-xs font-bold shrink-0 ${
-              m.sender === 'user' ? 'bg-[#14263d] text-white' : 'bg-emerald-600 text-white'
-            }`}>
+            <div
+              className={`w-9 h-9 rounded-xl grid place-items-center text-xs font-bold shrink-0 ${
+                m.sender === 'user' ? 'bg-[#14263d] text-white' : 'bg-emerald-600 text-white'
+              }`}
+            >
               {m.sender === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
             </div>
 
-            <div className={`max-w-xl p-4 rounded-2xl text-xs leading-relaxed shadow-xs ${
-              m.sender === 'user'
-                ? 'bg-[#14263d] text-white rounded-tr-xs'
-                : 'bg-slate-100 text-slate-800 rounded-tl-xs'
-            }`}>
+            <div
+              className={`max-w-[85%] sm:max-w-xl p-3.5 sm:p-4 rounded-2xl text-xs sm:text-sm leading-relaxed shadow-xs break-words ${
+                m.sender === 'user'
+                  ? 'bg-[#14263d] text-white rounded-tr-xs'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 rounded-tl-xs'
+              }`}
+            >
               <p className="whitespace-pre-wrap">{m.text}</p>
-              <span className={`block text-[10px] mt-2 ${m.sender === 'user' ? 'text-slate-300' : 'text-slate-400'}`}>
+              <span
+                className={`block text-[10px] mt-2 ${
+                  m.sender === 'user' ? 'text-slate-300' : 'text-slate-400'
+                }`}
+              >
                 {m.timestamp}
               </span>
             </div>
           </div>
         ))}
+
         {loading && (
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white grid place-items-center">
               <Sparkles className="w-4 h-4 animate-spin" />
             </div>
-            <div className="p-4 bg-slate-100 rounded-2xl text-xs text-slate-500 animate-pulse">
-              Analisando dados financeiros e preparando resposta...
+            <div className="p-3.5 bg-slate-100 dark:bg-slate-800 rounded-2xl text-xs sm:text-sm text-slate-500 dark:text-slate-300 animate-pulse">
+              Analisando resumo financeiro...
             </div>
           </div>
         )}
       </div>
 
       {/* Input Bar */}
-      <div className="bg-white border border-slate-200 p-3 rounded-2xl shadow-xs flex items-center gap-3">
+      <div className="shrink-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 sm:p-3 rounded-2xl shadow-xs flex items-center gap-2">
         <input
           type="text"
-          placeholder="Pergunte sobre receitas, despesas, boletos ou planejamento..."
+          placeholder="Pergunte sobre gastos, receitas, boletos ou faturas..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-          className="flex-1 px-4 py-2.5 text-xs outline-none bg-transparent text-slate-800"
+          className="flex-1 px-3 py-2 text-base sm:text-sm outline-none bg-transparent text-slate-800 dark:text-white min-h-12"
         />
         <button
+          type="button"
           onClick={() => handleSend()}
-          className="bg-[#14263d] hover:bg-[#1d3552] text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5"
+          disabled={loading}
+          className="bg-[#14263d] hover:bg-[#1d3552] dark:bg-emerald-600 dark:hover:bg-emerald-700 text-white px-4 sm:px-5 min-h-12 rounded-xl text-xs sm:text-sm font-bold shadow-sm transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
         >
-          <Send className="w-4 h-4" /> Enviar
+          <Send className="w-4 h-4" />
+          <span className="hidden sm:inline">Enviar</span>
         </button>
       </div>
     </div>

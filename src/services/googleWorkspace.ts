@@ -10,7 +10,6 @@ const provider = new GoogleAuthProvider();
 // Minimum required scopes as requested in Phase 0
 provider.addScope('https://www.googleapis.com/auth/drive.file');
 provider.addScope('https://www.googleapis.com/auth/calendar.events');
-provider.addScope('https://www.googleapis.com/auth/spreadsheets');
 
 let cachedAccessToken: string | null = null;
 let isSigningIn = false;
@@ -99,9 +98,9 @@ export const exportToGoogleSheets = async (token: string, transactions: any[]) =
 
 // Google Calendar Event Sync with exclusive end date for all-day events and res.ok check
 export const syncBoletoToCalendar = async (token: string, boleto: { beneficiario: string; valorOriginal: number; vencimento: string; descricao: string }) => {
-  // Calculate exclusive end date (next day) for all-day events
-  const dueDateObj = new Date(boleto.vencimento);
-  dueDateObj.setDate(dueDateObj.getDate() + 1);
+  // Calculate exclusive end date (next day in UTC) for all-day events
+  const [year, month, day] = boleto.vencimento.split('-').map(Number);
+  const dueDateObj = new Date(Date.UTC(year, (month || 1) - 1, (day || 1) + 1));
   const exclusiveEndDate = dueDateObj.toISOString().split('T')[0];
 
   const event = {
