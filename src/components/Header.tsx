@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { EntityScope, Boleto } from '../types';
 import { calculateCountdown } from '../utils/countdown';
+import { PeriodOption } from '../utils/dateUtils';
+import { PWAInstallButton } from './PWAInstallButton';
 import { Bell, ShieldCheck, UserCheck, Building, Sun, Moon, Plus, X } from 'lucide-react';
 
 interface HeaderProps {
@@ -9,6 +11,7 @@ interface HeaderProps {
   setScope: (scope: EntityScope) => void;
   period: string;
   setPeriod: (period: string) => void;
+  periodOptions: PeriodOption[];
   onOpenNewTransaction: () => void;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
@@ -22,6 +25,7 @@ export const Header: React.FC<HeaderProps> = ({
   setScope,
   period,
   setPeriod,
+  periodOptions,
   onOpenNewTransaction,
   theme,
   onToggleTheme,
@@ -34,11 +38,13 @@ export const Header: React.FC<HeaderProps> = ({
     dashboard: 'Visão executiva',
     cpf: 'Finanças pessoais · CPF',
     cnpj: 'Empresa · CNPJ / MEI',
+    salary: 'Salários e Evolução da Renda',
     accounts: 'Contas bancárias',
     cards: 'Cartões de crédito',
     boletos: 'Boletos e contas a pagar',
     debts: 'Dívidas e compromissos',
     planning: 'Planejamento 50/30/20',
+    investments: 'Investimentos · CDI & Simulador',
     assets: 'Patrimônio e investimentos',
     documents: 'Central de Documentos & Leitura',
     imports: 'Extratos & Open Finance',
@@ -66,18 +72,21 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Period selector (YYYY-MM) */}
+          {/* Dynamic Period selector (YYYY-MM) */}
           <select
             aria-label="Período de referência"
             value={period}
             onChange={(e) => setPeriod(e.target.value)}
             className="border border-slate-200 dark:border-slate-700 py-1.5 px-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200 outline-none focus:border-emerald-500 cursor-pointer min-h-11"
           >
-            <option value="2026-11">Nov/2026</option>
-            <option value="2026-10">Out/2026</option>
-            <option value="2026">2026 · Ano</option>
-            <option value="ALL">Todo período</option>
+            {periodOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </select>
+
+          <PWAInstallButton compact />
 
           {/* Desktop Novo Lançamento */}
           <button

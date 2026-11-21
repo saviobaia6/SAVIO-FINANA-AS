@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   DocumentItem,
   Transaction,
@@ -16,6 +16,8 @@ import {
   checkDuplicateTransaction,
   detectInternalTransfer,
 } from '../utils/financeCalculations';
+import { todayLocal, todayDisplayPtBr } from '../utils/dateUtils';
+import { fileStorageService } from '../services/fileStorage';
 import {
   FileSearch,
   Camera,
@@ -30,6 +32,7 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowLeftRight,
+  Trash2,
 } from 'lucide-react';
 
 interface DocumentsViewProps {
@@ -37,6 +40,7 @@ interface DocumentsViewProps {
   accounts: Account[];
   transactions: Transaction[];
   onAddDocument: (doc: DocumentItem) => void;
+  onDeleteDocument?: (id: string) => void;
   onAddTransactions: (items: Omit<Transaction, 'id'>[]) => void;
 }
 
@@ -67,6 +71,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
   accounts,
   transactions,
   onAddDocument,
+  onDeleteDocument,
   onAddTransactions,
 }) => {
   const [activeTab, setActiveTab] = useState<'upload' | 'camera' | 'reader'>('upload');
@@ -75,8 +80,9 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
   const [successMsg, setSuccessMsg] = useState('');
   const [drafts, setDrafts] = useState<DraftRow[]>([]);
 
-  // Reader state
+  // Reader state (Blob ObjectURL resolved lazily from IndexedDB)
   const [selectedDoc, setSelectedDoc] = useState<DocumentItem | null>(null);
+  const [readerBlobUrl, setReaderBlobUrl] = useState<string | null>(null);
   const [zoomLevel, setZoomLevel] = useState(100);
   const [rotation, setRotation] = useState(0);
   const [readerTheme, setReaderTheme] = useState<'light' | 'sepia' | 'dark'>('light');
@@ -85,6 +91,39 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    let generatedUrl: string | null = null;
+
+    if (!selectedDoc) {
+      setReaderBlobUrl(null);
+      return;
+    }
+
+    (async () => {
+      const url = await fileStorageService.getFileObjectUrl(selectedDoc.id);
+      if (!active) {
+        if (url) URL.revokeObjectURL(url);
+        return;
+      }
+      generatedUrl = url;
+      setReaderBlobUrl(url || selectedDoc.previewUrl || null);
+    })();
+
+    return () => {
+      active = false;
+      if (generatedUrl) URL.revokeObjectURL(generatedUrl);
+    };
+  }, [selectedDoc?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (capturedImage && capturedImage.startsWith('blob:')) {
+        URL.revokeObjectURL(capturedImage);
+      }
+    };
+  }, [capturedImage]);
 
   const startCamera = async () => {
     setErrorMsg('');
@@ -111,20 +150,16 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     setCameraActive(false);
   };
 
-  const readFileAsDataUrl = (file: File): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(new Error('Falha ao ler o arquivo.'));
-      reader.readAsDataURL(file);
-    });
+  const activeAccounts = accounts.filter((a) => !a.archived);
 
   const buildDraftsFromExtracted = (items: ExtractedDocumentTransaction[]): DraftRow[] => {
     const seenExternalIds = new Set<string>();
     const seenFingerprints = new Set<string>();
+    const selectableAccounts = activeAccounts.length > 0 ? activeAccounts : accounts;
 
     return items.map((item, idx) => {
-      const defaultAcc = accounts.find((a) => a.entityId === (item.entity || 'CPF')) || accounts[0];
+      const defaultAcc =
+        selectableAccounts.find((a) => a.entityId === (item.entity || 'CPF')) || selectableAccounts[0];
       const extClean = (item.externalId || '').trim().toLowerCase();
       const fingerprint = `${item.date}|${Math.round(item.amount * 100)}|${item.description.trim().toLowerCase()}`;
 
@@ -184,10 +219,12 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
   };
 
   const analyzeMultimodal = async (params: {
+    docId?: string;
+    fileId?: string;
     fileName: string;
     mimeType: string;
     base64?: string;
-    previewUrl?: string;
+    blob?: Blob;
     textContent?: string;
     sizeLabel: string;
     docType: DocumentItem['type'];
@@ -197,9 +234,28 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     setSuccessMsg('');
     setDrafts([]);
 
+    const docId = params.docId || 'doc-' + Date.now();
+    let finalFileId = params.fileId;
+    let finalMime = params.mimeType;
+    let finalSize = params.sizeLabel;
+    let aiBase64 = params.base64;
+
+    if (params.blob && !finalFileId) {
+      const savedMeta = await fileStorageService.saveDocumentFile(
+        docId,
+        params.blob,
+        params.fileName,
+        params.mimeType
+      );
+      finalFileId = savedMeta.fileId;
+      finalMime = savedMeta.mimeType;
+      finalSize = savedMeta.sizeLabel;
+      aiBase64 = savedMeta.base64 || aiBase64;
+    }
+
     let extractedList: ExtractedDocumentTransaction[] | undefined;
 
-    if (params.base64 || params.textContent) {
+    if (aiBase64 || params.textContent) {
       try {
         const res = await fetch('/api/ai/parse-document', {
           method: 'POST',
@@ -207,14 +263,16 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
           body: JSON.stringify({
             fileName: params.fileName,
             textContent: params.textContent,
-            knownAccounts: accounts.map((a) => ({
-              institutionName: a.institutionName,
-              accountName: a.accountName,
-              entityId: a.entityId,
-            })),
+            knownAccounts: accounts
+              .filter((a) => !a.archived)
+              .map((a) => ({
+                institutionName: a.institutionName,
+                accountName: a.accountName,
+                entityId: a.entityId,
+              })),
             fileData:
-              params.base64 && /^(application\/pdf|image\/(png|jpeg|jpg|webp))$/.test(params.mimeType)
-                ? { mimeType: params.mimeType, base64: params.base64 }
+              aiBase64 && /^(application\/pdf|image\/(png|jpeg|jpg|webp))$/.test(finalMime)
+                ? { mimeType: finalMime, base64: aiBase64 }
                 : undefined,
           }),
         });
@@ -237,13 +295,15 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     }
 
     const newDoc: DocumentItem = {
-      id: 'doc-' + Date.now(),
+      id: docId,
       name: params.fileName,
       type: params.docType,
-      date: new Date().toLocaleDateString('pt-BR'),
-      size: params.sizeLabel,
+      date: todayDisplayPtBr(),
+      size: finalSize,
       status: extractedList ? 'PROCESSED' : 'PENDING',
-      previewUrl: params.previewUrl,
+      hasBlob: Boolean(params.blob || finalFileId),
+      fileId: finalFileId,
+      mimeType: finalMime,
       textContent: params.textContent,
       extractedTransactions: extractedList,
     };
@@ -264,43 +324,61 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     if (!ctx) return;
 
     ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/png');
-    setCapturedImage(dataUrl);
     stopCamera();
 
-    const base64 = dataUrl.split(',')[1];
+    const rawBlob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), 'image/png')
+    );
+    if (!rawBlob) {
+      setErrorMsg('Não foi possível capturar a imagem da câmera.');
+      return;
+    }
+
+    const docId = 'doc-' + Date.now();
+    const fileName = `Comprovante_${todayLocal()}.jpg`;
+    const savedMeta = await fileStorageService.saveDocumentFile(docId, rawBlob, fileName, 'image/png');
+    const objUrl = await fileStorageService.getFileObjectUrl(docId);
+    if (objUrl) setCapturedImage(objUrl);
+
     await analyzeMultimodal({
-      fileName: `Comprovante_${new Date().toISOString().slice(0, 10)}.png`,
-      mimeType: 'image/png',
-      base64,
-      previewUrl: dataUrl,
-      sizeLabel: `${Math.round((base64.length * 3) / 4 / 1024)} KB`,
+      docId,
+      fileId: savedMeta.fileId,
+      fileName,
+      mimeType: savedMeta.mimeType,
+      base64: savedMeta.base64,
+      blob: rawBlob,
+      sizeLabel: savedMeta.sizeLabel,
       docType: 'Imagem',
     });
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
 
     const ext = file.name.toLowerCase();
-    const sizeLabel =
-      file.size >= 1024 * 1024
-        ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
-        : `${Math.max(1, Math.round(file.size / 1024))} KB`;
+    const docId = 'doc-' + Date.now();
 
     if (ext.endsWith('.epub')) {
-      const previewUrl = URL.createObjectURL(file);
+      const savedMeta = await fileStorageService.saveDocumentFile(
+        docId,
+        file,
+        file.name,
+        file.type || 'application/epub+zip'
+      );
       const newDoc: DocumentItem = {
-        id: 'doc-' + Date.now(),
+        id: docId,
         name: file.name,
         type: 'EPUB',
-        date: new Date().toLocaleDateString('pt-BR'),
-        size: sizeLabel,
+        date: todayDisplayPtBr(),
+        size: savedMeta.sizeLabel,
         status: 'PENDING',
-        previewUrl,
+        hasBlob: true,
+        fileId: savedMeta.fileId,
+        mimeType: savedMeta.mimeType,
         textContent:
-          'Arquivo EPUB carregado localmente. Navegadores não renderizam pacotes EPUB compactados nativamente sem leitor dedicado; use o botão Baixar para abrir no leitor do dispositivo.',
+          'Arquivo EPUB salvo no IndexedDB local (SavioFinanaDB). Use o botão Baixar para abrir no leitor do dispositivo.',
       };
       onAddDocument(newDoc);
       setSelectedDoc(newDoc);
@@ -309,18 +387,24 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     }
 
     try {
-      const dataUrl = await readFileAsDataUrl(file);
-      const base64 = dataUrl.split(',')[1];
-      const mimeType =
-        file.type || (ext.endsWith('.pdf') ? 'application/pdf' : ext.endsWith('.png') ? 'image/png' : 'image/jpeg');
+      const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp)$/i.test(ext);
+      // PDFs are stored untouched without compression inside fileStorageService
+      const savedMeta = await fileStorageService.saveDocumentFile(
+        docId,
+        file,
+        file.name,
+        isImage ? file.type : file.type || 'application/pdf'
+      );
 
       await analyzeMultimodal({
+        docId,
+        fileId: savedMeta.fileId,
         fileName: file.name,
-        mimeType,
-        base64,
-        previewUrl: dataUrl,
-        sizeLabel,
-        docType: ext.endsWith('.pdf') ? 'PDF' : 'Imagem',
+        mimeType: savedMeta.mimeType,
+        base64: savedMeta.base64,
+        blob: file,
+        sizeLabel: savedMeta.sizeLabel,
+        docType: isImage ? 'Imagem' : 'PDF',
       });
     } catch {
       setErrorMsg('Não foi possível ler o arquivo selecionado.');
@@ -633,15 +717,15 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
           <div
             className={`${readerThemeClass} border border-slate-200 dark:border-slate-700 rounded-xl p-4 min-h-[420px] overflow-auto flex items-center justify-center`}
           >
-            {selectedDoc.type === 'PDF' && selectedDoc.previewUrl ? (
+            {selectedDoc.type === 'PDF' && readerBlobUrl ? (
               <iframe
                 title={selectedDoc.name}
-                src={selectedDoc.previewUrl}
+                src={readerBlobUrl}
                 className="w-full h-[520px] rounded-lg border-0 bg-white"
               />
-            ) : selectedDoc.type === 'Imagem' && selectedDoc.previewUrl ? (
+            ) : selectedDoc.type === 'Imagem' && readerBlobUrl ? (
               <img
-                src={selectedDoc.previewUrl}
+                src={readerBlobUrl}
                 alt={selectedDoc.name}
                 style={{
                   transform: `scale(${zoomLevel / 100}) rotate(${rotation}deg)`,
@@ -652,11 +736,11 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
             ) : (
               <div className="max-w-xl text-center space-y-4 p-4">
                 <p className="text-sm leading-relaxed">
-                  {selectedDoc.textContent || 'Arquivo carregado localmente.'}
+                  {selectedDoc.textContent || 'Arquivo carregado localmente (IndexedDB).'}
                 </p>
-                {selectedDoc.previewUrl && (
+                {readerBlobUrl && (
                   <a
-                    href={selectedDoc.previewUrl}
+                    href={readerBlobUrl}
                     download={selectedDoc.name}
                     className="inline-flex items-center gap-2 px-4 min-h-11 bg-[#14263d] text-white rounded-xl text-xs font-bold"
                   >
@@ -900,7 +984,7 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                         onChange={(e) => updateDraft(row.rowId, { accountId: e.target.value })}
                         className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm bg-white dark:bg-slate-900 text-slate-900 dark:text-white min-h-11"
                       >
-                        {accounts.map((a) => (
+                        {(activeAccounts.length > 0 ? activeAccounts : accounts).map((a) => (
                           <option key={a.id} value={a.id}>
                             {a.institutionName} · {a.accountName} ({a.entityId})
                           </option>
@@ -977,19 +1061,38 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
                   <div className="font-bold text-sm text-slate-800 dark:text-white truncate">{d.name}</div>
                   <div className="text-xs text-slate-400">
                     {d.type} · {d.date} · {d.size}
+                    {d.hasBlob && ' · IndexedDB'}
                     {d.extractedTransactions && ` · ${d.extractedTransactions.length} lançamento(s)`}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedDoc(d);
-                    setActiveTab('reader');
-                  }}
-                  className="px-3.5 min-h-10 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 hover:bg-blue-100 rounded-xl text-xs font-bold shrink-0 cursor-pointer"
-                >
-                  Abrir Leitor
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedDoc(d);
+                      setActiveTab('reader');
+                    }}
+                    className="px-3.5 min-h-10 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 hover:bg-blue-100 rounded-xl text-xs font-bold cursor-pointer"
+                  >
+                    Abrir Leitor
+                  </button>
+                  {onDeleteDocument && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectedDoc?.id === d.id) {
+                          setSelectedDoc(null);
+                          if (activeTab === 'reader') setActiveTab('upload');
+                        }
+                        onDeleteDocument(d.id);
+                      }}
+                      className="min-w-10 min-h-10 grid place-items-center text-slate-400 hover:text-red-600 rounded-xl cursor-pointer"
+                      aria-label={`Excluir ${d.name}`}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>

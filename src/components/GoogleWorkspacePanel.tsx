@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Transaction, Boleto } from '../types';
+import { FullBackupPayload } from '../utils/backup';
 import {
   signInWithGoogleWorkspace,
   getWorkspaceAccessToken,
@@ -8,21 +9,25 @@ import {
   backupToGoogleDrive,
 } from '../services/googleWorkspace';
 import { FileSpreadsheet, Calendar, HardDrive, CheckCircle2, AlertCircle, ExternalLink } from 'lucide-react';
+import { Sheet } from './Sheet';
 
 interface GoogleWorkspacePanelProps {
   transactions: Transaction[];
   boletos: Boleto[];
+  fullBackup: FullBackupPayload;
 }
 
 export const GoogleWorkspacePanel: React.FC<GoogleWorkspacePanelProps> = ({
   transactions,
   boletos,
+  fullBackup,
 }) => {
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [sheetUrl, setSheetUrl] = useState<string | null>(null);
+  const [pendingCalendarBoleto, setPendingCalendarBoleto] = useState<Boleto | null>(null);
 
   useEffect(() => {
     const activeToken = getWorkspaceAccessToken();
@@ -67,12 +72,18 @@ export const GoogleWorkspacePanel: React.FC<GoogleWorkspacePanelProps> = ({
     }
   };
 
-  const handleSyncCalendar = async (boleto: Boleto) => {
+  const requestSyncCalendar = (boleto: Boleto) => {
     if (!token) {
       setErrorMessage('Faça login com Google Workspace primeiro.');
       return;
     }
-    if (!window.confirm(`Adicionar o vencimento de "${boleto.beneficiario}" ao Google Calendar?`)) return;
+    setPendingCalendarBoleto(boleto);
+  };
+
+  const confirmSyncCalendar = async () => {
+    if (!token || !pendingCalendarBoleto) return;
+    const boleto = pendingCalendarBoleto;
+    setPendingCalendarBoleto(null);
     setLoading(true);
     setErrorMessage('');
     try {
@@ -94,8 +105,8 @@ export const GoogleWorkspacePanel: React.FC<GoogleWorkspacePanelProps> = ({
     setLoading(true);
     setErrorMessage('');
     try {
-      await backupToGoogleDrive(token, { transactions, boletos });
-      setStatusMessage('Backup financeiro salvo com sucesso no Google Drive!');
+      await backupToGoogleDrive(token, fullBackup);
+      setStatusMessage('Backup completo salvo com sucesso no Google Drive!');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Falha no backup.';
       setErrorMessage(`Erro ao salvar backup no Google Drive: ${msg}`);
@@ -218,7 +229,7 @@ export const GoogleWorkspacePanel: React.FC<GoogleWorkspacePanelProps> = ({
                 <button
                   key={b.id}
                   type="button"
-                  onClick={() => handleSyncCalendar(b)}
+                  onClick={() => requestSyncCalendar(b)}
                   className="w-full text-left px-2.5 min-h-9 bg-white dark:bg-slate-900 hover:bg-amber-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-lg text-[11px] truncate text-slate-700 dark:text-slate-200 cursor-pointer"
                 >
                   Agendar: {b.beneficiario} ({b.vencimento})
@@ -228,6 +239,38 @@ export const GoogleWorkspacePanel: React.FC<GoogleWorkspacePanelProps> = ({
           </div>
         </div>
       )}
+
+      <Sheet
+        open={Boolean(pendingCalendarBoleto)}
+        onClose={() => setPendingCalendarBoleto(null)}
+        title="Agendar no Google Calendar"
+        subtitle={pendingCalendarBoleto?.beneficiario}
+      >
+        {pendingCalendarBoleto && (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-700 dark:text-slate-200">
+              Deseja criar um lembrete de vencimento para <strong>{pendingCalendarBoleto.beneficiario}</strong> na data{' '}
+              <strong>{pendingCalendarBoleto.vencimento.split('-').reverse().join('/')}</strong>?
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setPendingCalendarBoleto(null)}
+                className="flex-1 min-h-12 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmSyncCalendar}
+                className="flex-[1.5] min-h-12 bg-[#14263d] dark:bg-emerald-600 text-white rounded-xl text-sm font-bold cursor-pointer"
+              >
+                Confirmar agendamento
+              </button>
+            </div>
+          </div>
+        )}
+      </Sheet>
     </div>
   );
 };

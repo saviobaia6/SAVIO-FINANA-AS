@@ -74,10 +74,8 @@ export const CnpjView: React.FC<CnpjViewProps> = ({
     return cnpjTrs.filter((t) => t.direction === 'INCOME' && !t.isInternalTransfer);
   }, [cnpjTrs]);
 
-  const confirmDelete = (t: Transaction) => {
-    if (window.confirm(`Deseja excluir o lançamento "${t.description}"?`)) {
-      onDeleteTransaction(t.id);
-    }
+  const handleDelete = (t: Transaction) => {
+    onDeleteTransaction(t.id);
   };
 
   return (
@@ -293,7 +291,7 @@ export const CnpjView: React.FC<CnpjViewProps> = ({
                       </button>
                       <button
                         type="button"
-                        onClick={() => confirmDelete(t)}
+                        onClick={() => handleDelete(t)}
                         className="min-w-10 min-h-10 grid place-items-center text-slate-500 hover:text-red-600 dark:text-slate-400 dark:hover:text-red-400 cursor-pointer"
                         aria-label={`Excluir ${t.description}`}
                       >
@@ -374,7 +372,7 @@ export const CnpjView: React.FC<CnpjViewProps> = ({
                           </button>
                           <button
                             type="button"
-                            onClick={() => confirmDelete(t)}
+                            onClick={() => handleDelete(t)}
                             className="p-2 text-slate-400 hover:text-red-600 rounded-lg cursor-pointer"
                             title="Excluir"
                           >

@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { Asset } from '../types';
 import { toCents, fromCents, parseCurrencyInput, formatCurrencyBRL } from '../utils/financeCalculations';
-import { TrendingUp, Plus, Trash2, X, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { todayLocal } from '../utils/dateLocal';
+import { TrendingUp, Plus, Trash2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Sheet } from './Sheet';
 
 interface AssetsViewProps {
   assets: Asset[];
@@ -40,7 +42,7 @@ export const AssetsView: React.FC<AssetsViewProps> = ({ assets, onAddAsset, onDe
       institutionName: institutionName.trim(),
       description: description.trim(),
       currentValue: val,
-      valuationDate: new Date().toISOString().split('T')[0],
+      valuationDate: todayLocal(),
     });
 
     setDescription('');
@@ -118,10 +120,9 @@ export const AssetsView: React.FC<AssetsViewProps> = ({ assets, onAddAsset, onDe
                 </span>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (window.confirm(`Remover o ativo "${a.description}"?`)) onDeleteAsset(a.id);
-                  }}
+                  onClick={() => onDeleteAsset(a.id)}
                   className="min-w-10 min-h-10 grid place-items-center text-slate-400 hover:text-red-600 cursor-pointer"
+                  aria-label={`Remover ${a.description}`}
                 >
                   <Trash2 size={16} />
                 </button>
@@ -170,9 +171,7 @@ export const AssetsView: React.FC<AssetsViewProps> = ({ assets, onAddAsset, onDe
                   <td className="py-4 px-6 text-center">
                     <button
                       type="button"
-                      onClick={() => {
-                        if (window.confirm(`Remover "${a.description}"?`)) onDeleteAsset(a.id);
-                      }}
+                      onClick={() => onDeleteAsset(a.id)}
                       className="p-2 text-slate-400 hover:text-red-600 rounded-lg cursor-pointer"
                       title="Excluir"
                     >
@@ -186,102 +185,87 @@ export const AssetsView: React.FC<AssetsViewProps> = ({ assets, onAddAsset, onDe
         </div>
       </div>
 
-      {/* Add Asset Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-end md:items-center justify-center">
-          <div
-            className="bg-white dark:bg-slate-900 w-full md:max-w-md rounded-t-3xl md:rounded-2xl max-h-[92dvh] flex flex-col overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800"
-            role="dialog"
-            aria-modal="true"
-          >
-            <header className="bg-[#14263d] text-white p-5 flex items-center justify-between">
-              <h3 className="text-base font-bold">Novo ativo / investimento</h3>
-              <button
-                type="button"
-                onClick={() => setModalOpen(false)}
-                className="min-w-10 min-h-10 grid place-items-center text-slate-300 hover:text-white cursor-pointer"
-              >
-                <X size={20} />
-              </button>
-            </header>
+      {/* Add Asset Sheet */}
+      <Sheet
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        title="Novo ativo / investimento"
+      >
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {errorMsg && (
+            <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl text-xs flex items-center gap-2">
+              <AlertCircle size={16} /> {errorMsg}
+            </div>
+          )}
 
-            <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
-              {errorMsg && (
-                <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl text-xs flex items-center gap-2">
-                  <AlertCircle size={16} /> {errorMsg}
-                </div>
-              )}
+          <input
+            type="text"
+            required
+            placeholder="Descrição (ex.: Tesouro Selic, Estoque)"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+          />
 
-              <input
-                type="text"
-                required
-                placeholder="Descrição (ex.: Tesouro Selic, Estoque)"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-              />
+          <input
+            type="text"
+            required
+            placeholder="Instituição ou custódia (ex.: Rico, Banco Inter)"
+            value={institutionName}
+            onChange={(e) => setInstitutionName(e.target.value)}
+            className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+          />
 
-              <input
-                type="text"
-                required
-                placeholder="Instituição ou custódia (ex.: Rico, Banco Inter)"
-                value={institutionName}
-                onChange={(e) => setInstitutionName(e.target.value)}
-                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-              />
-
-              <div className="grid grid-cols-2 gap-3">
-                <select
-                  value={assetType}
-                  onChange={(e) => setAssetType(e.target.value as Asset['assetType'])}
-                  className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-                >
-                  <option value="Reserva">Reserva</option>
-                  <option value="Renda Fixa">Renda Fixa</option>
-                  <option value="Renda Variável">Renda Variável</option>
-                  <option value="Fundos">Fundos</option>
-                  <option value="Produtos Boticário">Produtos Boticário</option>
-                  <option value="Outros">Outros</option>
-                </select>
-                <select
-                  value={entityId}
-                  onChange={(e) => setEntityId(e.target.value as 'CPF' | 'CNPJ')}
-                  className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-                >
-                  <option value="CPF">CPF</option>
-                  <option value="CNPJ">CNPJ</option>
-                </select>
-              </div>
-
-              <input
-                type="text"
-                inputMode="decimal"
-                required
-                placeholder="Valor atual (R$)"
-                value={valueStr}
-                onChange={(e) => setValueStr(e.target.value)}
-                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-bold bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-              />
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="flex-1 min-h-12 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="flex-[1.5] min-h-12 bg-[#14263d] dark:bg-emerald-600 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <CheckCircle2 size={16} /> Salvar ativo
-                </button>
-              </div>
-            </form>
+          <div className="grid grid-cols-2 gap-3">
+            <select
+              value={assetType}
+              onChange={(e) => setAssetType(e.target.value as Asset['assetType'])}
+              className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+            >
+              <option value="Reserva">Reserva</option>
+              <option value="Renda Fixa">Renda Fixa</option>
+              <option value="Renda Variável">Renda Variável</option>
+              <option value="Fundos">Fundos</option>
+              <option value="Produtos Boticário">Produtos Boticário</option>
+              <option value="Outros">Outros</option>
+            </select>
+            <select
+              value={entityId}
+              onChange={(e) => setEntityId(e.target.value as 'CPF' | 'CNPJ')}
+              className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+            >
+              <option value="CPF">CPF</option>
+              <option value="CNPJ">CNPJ</option>
+            </select>
           </div>
-        </div>
-      )}
+
+          <input
+            type="text"
+            inputMode="decimal"
+            required
+            placeholder="Valor atual (R$)"
+            value={valueStr}
+            onChange={(e) => setValueStr(e.target.value)}
+            className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-bold bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+          />
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setModalOpen(false)}
+              className="flex-1 min-h-12 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              className="flex-[1.5] min-h-12 bg-[#14263d] dark:bg-emerald-600 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <CheckCircle2 size={16} /> Salvar ativo
+            </button>
+          </div>
+        </form>
+      </Sheet>
     </div>
   );
 };

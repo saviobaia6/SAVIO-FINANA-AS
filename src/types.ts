@@ -75,6 +75,7 @@ export interface Transaction {
   operationType?: OperationType;
   counterparty?: string;
   externalId?: string;
+  salaryRecordId?: string;
 }
 
 export interface Account {
@@ -85,6 +86,7 @@ export interface Account {
   accountType: 'checking' | 'savings' | 'business' | 'investment';
   balance: number;
   openingBalance: number;
+  archived?: boolean;
 }
 
 export interface CreditCard {
@@ -113,6 +115,8 @@ export interface Boleto {
   entityId: 'CPF' | 'CNPJ';
   category: string;
   paidAt?: string;
+  paidAmount?: number;
+  paidAccountId?: string;
 }
 
 export interface Debt {
@@ -144,6 +148,9 @@ export interface DocumentItem {
   date: string;
   size: string;
   status: 'PENDING' | 'PROCESSED';
+  hasBlob?: boolean;
+  fileId?: string;
+  mimeType?: string;
   previewUrl?: string;
   textContent?: string;
   extractedTransactions?: ExtractedDocumentTransaction[];

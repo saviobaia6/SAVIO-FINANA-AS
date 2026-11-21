@@ -2,6 +2,7 @@ import { initializeApp, getApps } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { sanitizeCellForSheet } from '../utils/sheetGuard';
+import { todayLocal, todayDisplayPtBr, addDaysLocal } from '../utils/dateLocal';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 const auth = getAuth(app);
@@ -54,7 +55,7 @@ export const exportToGoogleSheets = async (token: string, transactions: any[]) =
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      properties: { title: `FINANCE IA - Relatório ${new Date().toLocaleDateString('pt-BR')}` }
+      properties: { title: `FINANCE IA - Relatório ${todayDisplayPtBr()}` }
     })
   });
   if (!createRes.ok) {
@@ -98,10 +99,7 @@ export const exportToGoogleSheets = async (token: string, transactions: any[]) =
 
 // Google Calendar Event Sync with exclusive end date for all-day events and res.ok check
 export const syncBoletoToCalendar = async (token: string, boleto: { beneficiario: string; valorOriginal: number; vencimento: string; descricao: string }) => {
-  // Calculate exclusive end date (next day in UTC) for all-day events
-  const [year, month, day] = boleto.vencimento.split('-').map(Number);
-  const dueDateObj = new Date(Date.UTC(year, (month || 1) - 1, (day || 1) + 1));
-  const exclusiveEndDate = dueDateObj.toISOString().split('T')[0];
+  const exclusiveEndDate = addDaysLocal(boleto.vencimento, 1);
 
   const event = {
     summary: `[FINANCE IA] Vencimento: ${boleto.beneficiario} - R$ ${boleto.valorOriginal}`,
@@ -134,7 +132,7 @@ export const syncBoletoToCalendar = async (token: string, boleto: { beneficiario
 export const backupToGoogleDrive = async (token: string, financialData: any) => {
   const fileContent = JSON.stringify(financialData, null, 2);
   const metadata = {
-    name: `FINANCE_IA_Backup_${new Date().toISOString().split('T')[0]}.json`,
+    name: `FINANCE_IA_Backup_${todayLocal()}.json`,
     mimeType: 'application/json'
   };
 

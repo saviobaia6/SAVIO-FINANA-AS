@@ -14,6 +14,8 @@ import {
   Bot,
   Settings,
   FolderOpen,
+  LineChart,
+  Banknote,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -26,11 +28,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
     { id: 'dashboard', label: 'Visão executiva', icon: LayoutDashboard, section: 'GESTÃO' },
     { id: 'cpf', label: 'Pessoal · CPF', icon: User, section: 'FINANÇAS' },
     { id: 'cnpj', label: 'Empresa · CNPJ', icon: Building2, section: 'FINANÇAS' },
+    { id: 'salary', label: 'Salários e Rendas', icon: Banknote, section: 'FINANÇAS' },
     { id: 'accounts', label: 'Contas bancárias', icon: Wallet, section: 'FINANÇAS' },
     { id: 'cards', label: 'Cartões de crédito', icon: CreditCard, section: 'FINANÇAS' },
     { id: 'boletos', label: 'Boletos e contas', icon: Receipt, section: 'FINANÇAS' },
     { id: 'debts', label: 'Dívidas e compromissos', icon: ArrowUpRight, section: 'FINANÇAS' },
     { id: 'planning', label: 'Planejamento 50/30/20', icon: PieChart, section: 'FINANÇAS' },
+    { id: 'investments', label: 'Investimentos · CDI', icon: LineChart, section: 'FINANÇAS' },
     { id: 'assets', label: 'Patrimônio e ativos', icon: TrendingUp, section: 'FINANÇAS' },
     { id: 'documents', label: 'Leitor & Scanner IA', icon: FileSearch, section: 'INTELIGÊNCIA' },
     { id: 'imports', label: 'Extratos & Importação', icon: FolderOpen, section: 'INTELIGÊNCIA' },

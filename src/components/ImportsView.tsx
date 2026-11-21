@@ -5,6 +5,7 @@ import {
   parseCurrencyInput,
   formatCurrencyBRL,
 } from '../utils/financeCalculations';
+import { todayLocal } from '../utils/dateLocal';
 import { Upload, CheckCircle2, AlertCircle, Lock } from 'lucide-react';
 
 interface ImportsViewProps {
@@ -39,7 +40,7 @@ function parseSimpleCsv(text: string): Omit<ParsedRow, 'id' | 'isDuplicate' | 's
     if (cols.length < 3) continue;
 
     // Try finding date (YYYY-MM-DD or DD/MM/YYYY), description, and numeric value
-    let dateStr = new Date().toISOString().split('T')[0];
+    let dateStr = todayLocal();
     if (/^\d{4}-\d{2}-\d{2}$/.test(cols[0])) {
       dateStr = cols[0];
     } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(cols[0])) {
@@ -75,7 +76,7 @@ function parseBasicOfx(text: string): Omit<ParsedRow, 'id' | 'isDuplicate' | 'se
     const rawVal = Number(amtMatch[1].replace(',', '.'));
     if (isNaN(rawVal) || rawVal === 0) return;
 
-    let dateStr = new Date().toISOString().split('T')[0];
+    let dateStr = todayLocal();
     if (dtMatch) {
       const s = dtMatch[1];
       dateStr = `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
@@ -98,8 +99,9 @@ export const ImportsView: React.FC<ImportsViewProps> = ({
   transactions,
   onImportTransactions,
 }) => {
+  const activeAccounts = accounts.filter((a) => !a.archived);
   const [fileName, setFileName] = useState('');
-  const [targetAccountId, setTargetAccountId] = useState(accounts[0]?.id || '');
+  const [targetAccountId, setTargetAccountId] = useState(activeAccounts[0]?.id || accounts[0]?.id || '');
   const [previewRows, setPreviewRows] = useState<ParsedRow[]>([]);
   const [statusMsg, setStatusMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -144,9 +146,9 @@ export const ImportsView: React.FC<ImportsViewProps> = ({
   };
 
   const confirmImport = () => {
-    const acc = accounts.find((a) => a.id === targetAccountId) || accounts[0];
+    const acc = activeAccounts.find((a) => a.id === targetAccountId) || activeAccounts[0];
     if (!acc) {
-      setErrorMsg('Selecione uma conta bancária de destino.');
+      setErrorMsg('Selecione uma conta bancária ativa de destino.');
       return;
     }
 
@@ -213,7 +215,7 @@ export const ImportsView: React.FC<ImportsViewProps> = ({
               onChange={(e) => setTargetAccountId(e.target.value)}
               className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
             >
-              {accounts.map((a) => (
+              {activeAccounts.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.institutionName} · {a.accountName} ({a.entityId})
                 </option>

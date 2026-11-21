@@ -8,6 +8,7 @@ import {
   OperationType,
 } from '../types';
 import { parseCurrencyInput } from '../utils/financeCalculations';
+import { todayLocal } from '../utils/dateLocal';
 import { X, Check, AlertCircle } from 'lucide-react';
 
 interface TransactionModalProps {
@@ -35,7 +36,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const [counterparty, setCounterparty] = useState('');
   const [externalId, setExternalId] = useState('');
   const [amount, setAmount] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(() => todayLocal());
   const [accountId, setAccountId] = useState<string>('');
   const [isInternalTransfer, setIsInternalTransfer] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -68,16 +69,22 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       setCounterparty('');
       setExternalId('');
       setAmount('');
-      setDate(new Date().toISOString().split('T')[0]);
+      setDate(todayLocal());
       setIsInternalTransfer(false);
-      const preferredAccount = accounts.find((a) => a.entityId === defaultEntity) || accounts[0];
+      const selectableAccounts = accounts.filter((a) => !a.archived);
+      const preferredAccount =
+        selectableAccounts.find((a) => a.entityId === defaultEntity) || selectableAccounts[0] || accounts[0];
       setAccountId(preferredAccount?.id || '');
     }
   }, [isOpen, defaultEntity, editingTransaction, accounts]);
 
   if (!isOpen) return null;
 
-  const selectedAccountObj = accounts.find((a) => a.id === accountId) || accounts[0];
+  const availableAccounts = accounts.filter(
+    (a) => !a.archived || a.id === editingTransaction?.accountId
+  );
+  const selectedAccountObj =
+    availableAccounts.find((a) => a.id === accountId) || availableAccounts[0] || accounts[0];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -296,9 +303,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                   onChange={(e) => setAccountId(e.target.value)}
                   className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-base font-medium text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-800 outline-none focus:border-emerald-500 min-h-12"
                 >
-                  {accounts.map((acc) => (
+                  {availableAccounts.map((acc) => (
                     <option key={acc.id} value={acc.id}>
-                      {acc.institutionName} ({acc.entityId})
+                      {acc.institutionName} ({acc.entityId}){acc.archived ? ' [Arquivada]' : ''}
                     </option>
                   ))}
                 </select>

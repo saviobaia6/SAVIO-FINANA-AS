@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { CreditCard as CreditCardType, Account } from '../types';
 import { parseCurrencyInput, formatCurrencyBRL } from '../utils/financeCalculations';
-import { CreditCard, Plus, X, AlertCircle, CheckCircle2, Trash2 } from 'lucide-react';
+import { CreditCard, Plus, AlertCircle, CheckCircle2, Trash2 } from 'lucide-react';
+import { Sheet } from './Sheet';
 
 interface CardsViewProps {
   cards: CreditCardType[];
@@ -79,8 +80,10 @@ export const CardsView: React.FC<CardsViewProps> = ({
     setModalOpen(false);
   };
 
+  const activeAccounts = accounts.filter((a) => !a.archived);
+
   const openPayModal = (card: CreditCardType) => {
-    const preferred = accounts.find((a) => a.entityId === card.entityId) || accounts[0];
+    const preferred = activeAccounts.find((a) => a.entityId === card.entityId) || activeAccounts[0];
     setPaymentAccountId(preferred?.id || '');
     setPayModalCard(card);
   };
@@ -142,11 +145,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
                     </span>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (window.confirm(`Remover o cartão "${card.cardName}"?`)) {
-                          onDeleteCard(card.id);
-                        }
-                      }}
+                      onClick={() => onDeleteCard(card.id)}
                       className="p-1.5 text-slate-400 hover:text-red-600 cursor-pointer"
                       aria-label={`Remover ${card.cardName}`}
                     >
@@ -218,182 +217,154 @@ export const CardsView: React.FC<CardsViewProps> = ({
         })}
       </div>
 
-      {/* Add Card Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-end md:items-center justify-center">
-          <div
-            className="bg-white dark:bg-slate-900 w-full md:max-w-md rounded-t-3xl md:rounded-2xl max-h-[92dvh] flex flex-col overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800"
-            role="dialog"
-            aria-modal="true"
-          >
-            <header className="bg-[#14263d] text-white p-5 flex items-center justify-between">
-              <h3 className="text-base font-bold">Novo cartão (apenas 4 últimos dígitos)</h3>
-              <button
-                type="button"
-                onClick={() => setModalOpen(false)}
-                className="min-w-10 min-h-10 grid place-items-center text-slate-300 hover:text-white cursor-pointer"
-                aria-label="Fechar"
-              >
-                <X size={20} />
-              </button>
-            </header>
-
-            <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
-              {errorMsg && (
-                <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl text-xs flex items-center gap-2">
-                  <AlertCircle size={16} /> {errorMsg}
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <input
-                  type="text"
-                  required
-                  placeholder="Nome do cartão (ex.: Inter Black)"
-                  value={cardName}
-                  onChange={(e) => setCardName(e.target.value)}
-                  className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Instituição (ex.: Banco Inter)"
-                  value={institutionName}
-                  onChange={(e) => setInstitutionName(e.target.value)}
-                  className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
-                    4 últimos dígitos
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={4}
-                    required
-                    placeholder="Ex.: 4821"
-                    value={last4}
-                    onChange={(e) => setLast4(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                    className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
-                    Vínculo
-                  </label>
-                  <select
-                    value={entityId}
-                    onChange={(e) => setEntityId(e.target.value as 'CPF' | 'CNPJ')}
-                    className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-                  >
-                    <option value="CPF">CPF</option>
-                    <option value="CNPJ">CNPJ</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
-                    Limite total (R$)
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    required
-                    placeholder="8000,00"
-                    value={limitStr}
-                    onChange={(e) => setLimitStr(e.target.value)}
-                    className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
-                    Fatura atual (R$)
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={invoiceStr}
-                    onChange={(e) => setInvoiceStr(e.target.value)}
-                    className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
-                    Dia fechamento
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={31}
-                    value={closingDay}
-                    onChange={(e) => setClosingDay(e.target.value)}
-                    className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
-                    Dia vencimento
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={31}
-                    value={dueDay}
-                    onChange={(e) => setDueDay(e.target.value)}
-                    className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="flex-1 min-h-12 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="flex-[1.5] min-h-12 bg-[#14263d] dark:bg-emerald-600 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <CheckCircle2 size={16} /> Salvar cartão
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Pay Invoice Modal */}
-      {payModalCard && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-end md:items-center justify-center">
-          <div
-            className="bg-white dark:bg-slate-900 w-full md:max-w-md rounded-t-3xl md:rounded-2xl p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4"
-            role="dialog"
-            aria-modal="true"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-[#14263d] dark:text-white">
-                Pagar fatura · {payModalCard.cardName}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setPayModalCard(null)}
-                className="min-w-10 min-h-10 grid place-items-center text-slate-400 cursor-pointer"
-              >
-                <X size={20} />
-              </button>
+      {/* Add Card Sheet */}
+      <Sheet
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        title="Novo cartão"
+        subtitle="Armazenamos apenas os 4 últimos dígitos"
+      >
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {errorMsg && (
+            <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl text-xs flex items-center gap-2">
+              <AlertCircle size={16} /> {errorMsg}
             </div>
+          )}
 
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <input
+              type="text"
+              required
+              placeholder="Nome do cartão (ex.: Inter Black)"
+              value={cardName}
+              onChange={(e) => setCardName(e.target.value)}
+              className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+            />
+            <input
+              type="text"
+              required
+              placeholder="Instituição (ex.: Banco Inter)"
+              value={institutionName}
+              onChange={(e) => setInstitutionName(e.target.value)}
+              className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                4 últimos dígitos
+              </label>
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={4}
+                required
+                placeholder="Ex.: 4821"
+                value={last4}
+                onChange={(e) => setLast4(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                Vínculo
+              </label>
+              <select
+                value={entityId}
+                onChange={(e) => setEntityId(e.target.value as 'CPF' | 'CNPJ')}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+              >
+                <option value="CPF">CPF</option>
+                <option value="CNPJ">CNPJ</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                Limite total (R$)
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                required
+                placeholder="8000,00"
+                value={limitStr}
+                onChange={(e) => setLimitStr(e.target.value)}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                Fatura atual (R$)
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={invoiceStr}
+                onChange={(e) => setInvoiceStr(e.target.value)}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                Dia fechamento
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={31}
+                value={closingDay}
+                onChange={(e) => setClosingDay(e.target.value)}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                Dia vencimento
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={31}
+                value={dueDay}
+                onChange={(e) => setDueDay(e.target.value)}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+              />
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setModalOpen(false)}
+              className="flex-1 min-h-12 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              className="flex-[1.5] min-h-12 bg-[#14263d] dark:bg-emerald-600 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <CheckCircle2 size={16} /> Salvar cartão
+            </button>
+          </div>
+        </form>
+      </Sheet>
+
+      {/* Pay Invoice Sheet */}
+      <Sheet
+        open={Boolean(payModalCard)}
+        onClose={() => setPayModalCard(null)}
+        title={payModalCard ? `Pagar fatura · ${payModalCard.cardName}` : 'Pagar fatura'}
+      >
+        {payModalCard && (
+          <div className="space-y-4">
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 text-sm">
               Valor da fatura:{' '}
               <strong className="text-red-700 dark:text-red-400">
@@ -411,7 +382,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
                 className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
               >
                 <option value="">Apenas zerar fatura</option>
-                {accounts.map((a) => (
+                {activeAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.institutionName} · {a.accountName} ({a.entityId})
                   </option>
@@ -436,8 +407,8 @@ export const CardsView: React.FC<CardsViewProps> = ({
               </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Sheet>
     </div>
   );
 };

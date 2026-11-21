@@ -4,10 +4,26 @@ import path from 'path';
 import fs from 'fs';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
-import { z } from 'zod';
 import { APP_CATEGORIES, OPERATION_TYPES } from './src/types';
+import {
+  AiTimeoutError,
+  ChatRequestSchema,
+  ExtractedBoletoSchema,
+  ExtractedDocBatchSchema,
+  ParseBoletoRequestSchema,
+  ParseDocumentSchema,
+  SlidingWindowRateLimiter,
+  isOriginAllowedForAi,
+  sanitizeTextInput,
+  withTimeout,
+} from './src/server/aiGuard';
+import { createInvestmentRouter } from './server/routes/investmentRoutes';
 
 dotenv.config();
+
+const GEMINI_MODEL = (process.env.GEMINI_MODEL || 'gemini-4-hydrogen').trim();
+const AI_RATE_LIMIT_PER_MIN = Math.max(5, Number(process.env.AI_RATE_LIMIT_PER_MIN) || 25);
+const AI_REQUEST_TIMEOUT_MS = 25000;
 
 const apiKey = process.env.GEMINI_API_KEY;
 const ai = apiKey
@@ -21,7 +37,10 @@ const ai = apiKey
     })
   : null;
 
+const aiRateLimiter = new SlidingWindowRateLimiter(AI_RATE_LIMIT_PER_MIN, 60_000);
+
 function isTransientAiError(err: unknown): boolean {
+  if (err instanceof AiTimeoutError) return false;
   const msg = err instanceof Error ? err.message : String(err);
   return (
     msg.includes('503') ||
@@ -32,6 +51,12 @@ function isTransientAiError(err: unknown): boolean {
 }
 
 function formatAiErrorResponse(err: unknown): { status: number; message: string } {
+  if (err instanceof AiTimeoutError) {
+    return {
+      status: 504,
+      message: err.message,
+    };
+  }
   const msg = err instanceof Error ? err.message : 'Erro ao processar solicitação com IA.';
   if (msg.includes('503') || msg.includes('UNAVAILABLE')) {
     return {
@@ -45,14 +70,14 @@ function formatAiErrorResponse(err: unknown): { status: number; message: string 
       message: 'Limite de requisições da IA atingido no momento (429). Aguarde alguns segundos e tente novamente.',
     };
   }
-  return { status: 500, message: msg };
+  return { status: 500, message: 'Não foi possível processar a análise no momento. Tente novamente.' };
 }
 
 async function generateWithRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      return await fn();
+      return await withTimeout(fn(), AI_REQUEST_TIMEOUT_MS);
     } catch (err) {
       lastErr = err;
       if (attempt < maxAttempts && isTransientAiError(err)) {
@@ -66,120 +91,71 @@ async function generateWithRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Prom
   throw lastErr;
 }
 
-const ChatRequestSchema = z.object({
-  prompt: z.string().min(1).max(1500),
-  summaryContext: z.object({
-    period: z.string(),
-    scope: z.string(),
-    totalBalance: z.number(),
-    totalIncome: z.number(),
-    totalExpense: z.number(),
-    netResult: z.number(),
-    cpfIncome: z.number(),
-    cpfExpense: z.number(),
-    cnpjIncome: z.number(),
-    cnpjExpense: z.number(),
-    pendingBoletosCount: z.number(),
-    pendingBoletosTotal: z.number(),
-    overdueBoletosCount: z.number(),
-    topExpenseCategories: z.array(z.object({ category: z.string(), total: z.number() })),
-    upcomingBoletos: z.array(
-      z.object({
-        beneficiary: z.string(),
-        dueDate: z.string(),
-        amount: z.number(),
-        entity: z.string(),
-      })
-    ),
-    cardsSummary: z.array(
-      z.object({
-        cardName: z.string(),
-        entity: z.string(),
-        currentInvoice: z.number(),
-        limit: z.number(),
-      })
-    ),
-    totalDebt: z.number(),
-  }),
-});
-
-const ParseDocumentSchema = z
-  .object({
-    textContent: z.string().max(30000).optional(),
-    fileName: z.string().max(255).optional(),
-    knownAccounts: z
-      .array(
-        z.object({
-          institutionName: z.string(),
-          accountName: z.string(),
-          entityId: z.enum(['CPF', 'CNPJ']),
-        })
-      )
-      .optional(),
-    fileData: z
-      .object({
-        mimeType: z.string().regex(/^(application\/pdf|image\/(png|jpeg|jpg|webp))$/),
-        base64: z.string().min(10),
-      })
-      .optional(),
-  })
-  .refine((data) => Boolean(data.textContent || data.fileData), {
-    message: 'Envie um arquivo PDF/imagem válido ou texto para leitura.',
-  });
-
-const ExtractedDocItemSchema = z.object({
-  description: z.string().min(1),
-  amount: z.number().nonnegative(),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  category: z.enum(APP_CATEGORIES),
-  entity: z.enum(['CPF', 'CNPJ']),
-  direction: z.enum(['INCOME', 'EXPENSE']),
-  operationType: z.enum(OPERATION_TYPES),
-  counterparty: z.string().default(''),
-  externalId: z.string().default(''),
-  isInternalTransfer: z.boolean().default(false),
-  originAccountHint: z.string().default(''),
-  destinationAccountHint: z.string().default(''),
-  confidence: z.number().min(0).max(1),
-  confidenceNote: z.string().optional(),
-});
-
-const ExtractedDocBatchSchema = z.object({
-  transactions: z.array(ExtractedDocItemSchema).min(1),
-});
-
-const ParseBoletoRequestSchema = z
-  .object({
-    linhaDigitavel: z.string().optional(),
-    textContent: z.string().max(15000).optional(),
-    fileData: z
-      .object({
-        mimeType: z.string().regex(/^(application\/pdf|image\/(png|jpeg|jpg|webp))$/),
-        base64: z.string().min(10),
-      })
-      .optional(),
-  })
-  .refine((data) => Boolean(data.linhaDigitavel?.trim() || data.textContent?.trim() || data.fileData), {
-    message: 'Informe a linha digitável, texto ou arquivo do boleto.',
-  });
-
-const ExtractedBoletoSchema = z.object({
-  beneficiario: z.string().min(1),
-  pagador: z.string().min(1),
-  instituicao: z.string().min(1),
-  linhaDigitavel: z.string().default(''),
-  vencimento: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  valorOriginal: z.number().nonnegative(),
-  descricao: z.string().min(1),
-  entityId: z.enum(['CPF', 'CNPJ']).default('CPF'),
-});
+function getClientIdentifier(req: express.Request): string {
+  const fwd = req.headers['x-forwarded-for'];
+  if (typeof fwd === 'string' && fwd.trim()) {
+    return fwd.split(',')[0].trim();
+  }
+  return req.ip || 'unknown-client';
+}
 
 async function startServer() {
   const app = express();
+  app.set('trust proxy', 1);
+
+  // Baseline security headers compatible with AI Studio iFrame embedding
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    next();
+  });
+
   app.use(express.json({ limit: '15mb' }));
 
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, aiConfigured: Boolean(ai) });
+    res.json({ ok: true, aiConfigured: Boolean(ai), model: GEMINI_MODEL });
+  });
+
+  // Banco Central SGS 12 CDI history API with cache & validation
+  app.use('/api/investments', createInvestmentRouter());
+
+  // Security & quota protection middleware for all /api/ai/* routes
+  app.use('/api/ai', (req, res, next) => {
+    const allowedOrigin = isOriginAllowedForAi({
+      origin: typeof req.headers.origin === 'string' ? req.headers.origin : undefined,
+      host: typeof req.headers.host === 'string' ? req.headers.host : undefined,
+      forwardedHost:
+        typeof req.headers['x-forwarded-host'] === 'string'
+          ? req.headers['x-forwarded-host']
+          : undefined,
+    });
+
+    if (!allowedOrigin) {
+      return res.status(403).json({
+        error: 'Origem não autorizada para acessar os serviços de Inteligência Artificial.',
+      });
+    }
+
+    const requiredToken = process.env.AI_ACCESS_TOKEN?.trim();
+    if (requiredToken) {
+      const authHeader = req.headers.authorization || '';
+      const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+      if (provided !== requiredToken) {
+        return res.status(401).json({ error: 'Autenticação necessária para usar o recurso de IA.' });
+      }
+    }
+
+    const clientId = getClientIdentifier(req);
+    const rate = aiRateLimiter.check(clientId);
+    res.setHeader('X-RateLimit-Remaining', String(rate.remaining));
+    if (!rate.allowed) {
+      res.setHeader('Retry-After', String(rate.retryAfterSec));
+      return res.status(429).json({
+        error: `Limite temporário de uso da IA atingido. Aguarde ${rate.retryAfterSec}s e tente novamente.`,
+      });
+    }
+
+    next();
   });
 
   // AI Chat endpoint grounded in aggregated financial summary
@@ -197,6 +173,11 @@ async function startServer() {
 
     try {
       const { prompt, summaryContext } = parsedBody.data;
+      const cleanPrompt = sanitizeTextInput(prompt, 1500);
+      if (!cleanPrompt) {
+        return res.status(400).json({ error: 'Informe uma pergunta válida.' });
+      }
+
       const systemInstruction =
         'Você é o assistente financeiro executivo do FINANCE IA. ' +
         'Responda em português, de forma clara, objetiva e fundamentada EXCLUSIVAMENTE nos números agregados fornecidos abaixo. ' +
@@ -206,8 +187,8 @@ async function startServer() {
 
       const response = await generateWithRetry(() =>
         ai.models.generateContent({
-          model: 'gemini-4-hydrogen',
-          contents: prompt,
+          model: GEMINI_MODEL,
+          contents: cleanPrompt,
           config: {
             systemInstruction,
           },
@@ -217,7 +198,7 @@ async function startServer() {
       res.json({ reply: response.text || 'Não foi possível gerar uma resposta no momento.' });
     } catch (error: unknown) {
       const formatted = formatAiErrorResponse(error);
-      console.error('AI Chat Error:', formatted.message);
+      console.error('AI Chat Error:', formatted.status);
       res.status(formatted.status).json({ error: formatted.message });
     }
   });
@@ -226,7 +207,7 @@ async function startServer() {
   app.post('/api/ai/parse-document', async (req, res) => {
     const parsedBody = ParseDocumentSchema.safeParse(req.body);
     if (!parsedBody.success) {
-      return res.status(400).json({ error: 'Envie um arquivo PDF/imagem válido ou texto para leitura.' });
+      return res.status(400).json({ error: 'Envie um arquivo PDF/imagem válido (até 10 MB) ou texto para leitura.' });
     }
 
     if (!ai) {
@@ -249,13 +230,27 @@ async function startServer() {
         });
       }
 
-      const today = new Date().toISOString().split('T')[0];
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+        now.getDate()
+      ).padStart(2, '0')}`;
       const accountsText =
         knownAccounts && knownAccounts.length > 0
-          ? knownAccounts.map((a) => `- ${a.institutionName} (${a.accountName}) [${a.entityId}]`).join('\n')
+          ? knownAccounts
+              .map(
+                (a) =>
+                  `- ${sanitizeTextInput(a.institutionName, 100)} (${sanitizeTextInput(
+                    a.accountName,
+                    100
+                  )}) [${a.entityId}]`
+              )
+              .join('\n')
           : 'Nenhuma conta informada.';
 
-      const instruction = `Extraia TODOS os lançamentos financeiros visíveis no documento/extrato/comprovante anexado (${fileName || 'documento'}) no formato de array "transactions".
+      const cleanFileName = sanitizeTextInput(fileName || 'documento', 180);
+      const cleanText = textContent ? sanitizeTextInput(textContent, 30000) : '';
+
+      const instruction = `Extraia TODOS os lançamentos financeiros visíveis no documento/extrato/comprovante anexado (${cleanFileName}) no formato de array "transactions".
 Regras obrigatórias:
 1. Para cada lançamento, classifique "operationType" conforme as definições:
    - PIX: transferências ou pagamentos via Pix, chave Pix, QR Code Pix, ou com ID End-to-End (E...).
@@ -275,13 +270,13 @@ ${accountsText}
 6. Preencha "originAccountHint" e "destinationAccountHint" com banco/titular de origem e destino quando identificáveis (ou "").
 7. Preencha "confidence" de 0.0 a 1.0 refletindo o grau de certeza na leitura dos campos e explique qualquer dúvida em "confidenceNote".
 8. Nunca invente valores: se um valor estiver ilegível use 0 e reduza confidence; se a data estiver ilegível use ${today} e explique em confidenceNote.
-${textContent ? `\nTexto adicional:\n${textContent}` : ''}`;
+${cleanText ? `\nTexto adicional:\n${cleanText}` : ''}`;
 
       parts.push({ text: instruction });
 
       const response = await generateWithRetry(() =>
         ai.models.generateContent({
-          model: 'gemini-4-hydrogen',
+          model: GEMINI_MODEL,
           contents: { parts },
           config: {
             responseMimeType: 'application/json',
@@ -342,7 +337,7 @@ ${textContent ? `\nTexto adicional:\n${textContent}` : ''}`;
       res.json({ transactions: validated.data.transactions });
     } catch (error: unknown) {
       const formatted = formatAiErrorResponse(error);
-      console.error('Parse doc error:', formatted.message);
+      console.error('Parse doc error:', formatted.status);
       res.status(formatted.status).json({ error: formatted.message });
     }
   });
@@ -367,15 +362,16 @@ ${textContent ? `\nTexto adicional:\n${textContent}` : ''}`;
       if (fileData) {
         parts.push({ inlineData: { mimeType: fileData.mimeType, data: fileData.base64 } });
       }
+      const cleanLine = linhaDigitavel ? sanitizeTextInput(linhaDigitavel, 120) : 'N/A';
+      const cleanText = textContent ? sanitizeTextInput(textContent, 15000) : 'N/A';
+
       parts.push({
-        text: `Analise o boleto bancário (linha digitável: ${linhaDigitavel || 'N/A'}; texto: ${
-          textContent || 'N/A'
-        }) e extraia beneficiário, pagador, instituição, linha digitável, vencimento (YYYY-MM-DD), valorOriginal, descrição e vínculo (CPF ou CNPJ). Nunca invente valores não presentes.`,
+        text: `Analise o boleto bancário (linha digitável: ${cleanLine}; texto: ${cleanText}) e extraia beneficiário, pagador, instituição, linha digitável, vencimento (YYYY-MM-DD), valorOriginal, descrição e vínculo (CPF ou CNPJ). Nunca invente valores não presentes.`,
       });
 
       const response = await generateWithRetry(() =>
         ai.models.generateContent({
-          model: 'gemini-4-hydrogen',
+          model: GEMINI_MODEL,
           contents: { parts },
           config: {
             responseMimeType: 'application/json',
@@ -406,7 +402,7 @@ ${textContent ? `\nTexto adicional:\n${textContent}` : ''}`;
       res.json({ boleto: validated.data });
     } catch (error: unknown) {
       const formatted = formatAiErrorResponse(error);
-      console.error('Parse boleto error:', formatted.message);
+      console.error('Parse boleto error:', formatted.status);
       res.status(formatted.status).json({ error: formatted.message });
     }
   });
@@ -418,7 +414,10 @@ ${textContent ? `\nTexto adicional:\n${textContent}` : ''}`;
     });
   } else {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -426,7 +425,7 @@ ${textContent ? `\nTexto adicional:\n${textContent}` : ''}`;
 
   const PORT = Number(process.env.PORT) || 3000;
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`FINANCE IA server running on port ${PORT}`);
+    console.log(`FINANCE IA server running on port ${PORT} (model: ${GEMINI_MODEL})`);
   });
 }
 

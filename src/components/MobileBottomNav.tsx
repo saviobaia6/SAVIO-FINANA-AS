@@ -15,27 +15,35 @@ import {
   Settings,
   Package,
   CalendarDays,
+  TrendingUp,
+  Banknote,
 } from 'lucide-react';
+
+import { EntityScope } from '../types';
 
 interface MobileBottomNavProps {
   currentTab: string;
   setCurrentTab: (tab: string) => void;
+  scope: EntityScope;
   onOpenNew: () => void;
 }
 
 export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   currentTab,
   setCurrentTab,
+  scope,
   onOpenNew,
 }) => {
   const [moreOpen, setMoreOpen] = useState(false);
 
   const modules = [
+    { id: 'salary', label: 'Salários e Rendas', icon: Banknote },
     { id: 'accounts', label: 'Contas bancárias', icon: Landmark },
     { id: 'cards', label: 'Cartões de crédito', icon: CreditCard },
     { id: 'cnpj', label: 'Empresa · CNPJ', icon: Package },
     { id: 'debts', label: 'Dívidas', icon: Wallet },
     { id: 'planning', label: 'Planejamento', icon: CalendarDays },
+    { id: 'investments', label: 'Investimentos · CDI', icon: TrendingUp },
     { id: 'assets', label: 'Patrimônio', icon: Package },
     { id: 'documents', label: 'Documentos e Scanner', icon: FileText },
     { id: 'imports', label: 'Extratos e Open Finance', icon: Receipt },
@@ -48,6 +56,8 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
     setCurrentTab(tab);
     setMoreOpen(false);
   };
+
+  const movimTarget = scope === 'CNPJ' ? 'cnpj' : 'cpf';
 
   return (
     <>
@@ -70,12 +80,13 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
 
         <button
           type="button"
-          onClick={() => navigate('cpf')}
+          onClick={() => navigate(movimTarget)}
           className={`min-h-12 flex flex-col items-center justify-center gap-1 cursor-pointer ${
             currentTab === 'cpf' || currentTab === 'cnpj'
               ? 'text-emerald-600 dark:text-emerald-400'
               : 'text-slate-500 dark:text-slate-400'
           }`}
+          title={scope === 'CNPJ' ? 'Movimentações CNPJ' : 'Movimentações CPF'}
         >
           <ArrowLeftRight size={22} />
           <span className="text-xs font-medium">Movim.</span>

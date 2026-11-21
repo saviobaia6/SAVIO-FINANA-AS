@@ -68,10 +68,8 @@ export const CpfView: React.FC<CpfViewProps> = ({
     };
   }, [cpfTrs]);
 
-  const confirmDelete = (t: Transaction) => {
-    if (window.confirm(`Deseja excluir o lançamento "${t.description}"?`)) {
-      onDeleteTransaction(t.id);
-    }
+  const handleDelete = (t: Transaction) => {
+    onDeleteTransaction(t.id);
   };
 
   return (
@@ -224,7 +222,7 @@ export const CpfView: React.FC<CpfViewProps> = ({
                       </button>
                       <button
                         type="button"
-                        onClick={() => confirmDelete(t)}
+                        onClick={() => handleDelete(t)}
                         className="min-w-10 min-h-10 grid place-items-center text-slate-500 hover:text-red-600 dark:text-slate-400 dark:hover:text-red-400 rounded-lg cursor-pointer"
                         aria-label={`Excluir ${t.description}`}
                       >
@@ -308,7 +306,7 @@ export const CpfView: React.FC<CpfViewProps> = ({
                           </button>
                           <button
                             type="button"
-                            onClick={() => confirmDelete(t)}
+                            onClick={() => handleDelete(t)}
                             className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/60 rounded-lg transition-colors cursor-pointer"
                             title="Excluir"
                           >

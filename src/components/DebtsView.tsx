@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Debt } from '../types';
 import { toCents, fromCents, parseCurrencyInput, formatCurrencyBRL } from '../utils/financeCalculations';
-import { Plus, ShieldAlert, Trash2, X, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Plus, ShieldAlert, Trash2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Sheet } from './Sheet';
 
 interface DebtsViewProps {
   debts: Debt[];
@@ -134,10 +135,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ debts, onAddDebt, onDelete
                     </span>
                     <button
                       type="button"
-                      onClick={() => {
-                        if (window.confirm(`Remover "${d.creditorName}"?`)) onDeleteDebt(d.id);
-                      }}
+                      onClick={() => onDeleteDebt(d.id)}
                       className="min-w-10 min-h-10 grid place-items-center text-slate-400 hover:text-red-600 cursor-pointer"
+                      aria-label={`Remover ${d.creditorName}`}
                     >
                       <Trash2 size={16} />
                     </button>
@@ -187,9 +187,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ debts, onAddDebt, onDelete
                       <td className="py-4 px-6 text-center">
                         <button
                           type="button"
-                          onClick={() => {
-                            if (window.confirm(`Remover "${d.creditorName}"?`)) onDeleteDebt(d.id);
-                          }}
+                          onClick={() => onDeleteDebt(d.id)}
                           className="p-2 text-slate-400 hover:text-red-600 rounded-lg cursor-pointer"
                           title="Excluir"
                         >
@@ -205,117 +203,102 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ debts, onAddDebt, onDelete
         )}
       </div>
 
-      {/* Add Debt Modal */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-end md:items-center justify-center">
-          <div
-            className="bg-white dark:bg-slate-900 w-full md:max-w-md rounded-t-3xl md:rounded-2xl max-h-[92dvh] flex flex-col overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800"
-            role="dialog"
-            aria-modal="true"
-          >
-            <header className="bg-[#14263d] text-white p-5 flex items-center justify-between">
-              <h3 className="text-base font-bold">Registrar dívida / financiamento</h3>
-              <button
-                type="button"
-                onClick={() => setModalOpen(false)}
-                className="min-w-10 min-h-10 grid place-items-center text-slate-300 hover:text-white cursor-pointer"
-              >
-                <X size={20} />
-              </button>
-            </header>
+      {/* Add Debt Sheet */}
+      <Sheet
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        title="Registrar dívida / financiamento"
+      >
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {errorMsg && (
+            <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl text-xs flex items-center gap-2">
+              <AlertCircle size={16} /> {errorMsg}
+            </div>
+          )}
 
-            <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
-              {errorMsg && (
-                <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl text-xs flex items-center gap-2">
-                  <AlertCircle size={16} /> {errorMsg}
-                </div>
-              )}
+          <input
+            type="text"
+            required
+            placeholder="Credor (ex.: Banco do Brasil, Financeira)"
+            value={creditorName}
+            onChange={(e) => setCreditorName(e.target.value)}
+            className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+          />
 
-              <input
-                type="text"
-                required
-                placeholder="Credor (ex.: Banco do Brasil, Financeira)"
-                value={creditorName}
-                onChange={(e) => setCreditorName(e.target.value)}
-                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-              />
+          <input
+            type="text"
+            required
+            placeholder="Descrição (ex.: Financiamento veículo)"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+          />
 
-              <input
-                type="text"
-                required
-                placeholder="Descrição (ex.: Financiamento veículo)"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-              />
-
-              <div className="grid grid-cols-2 gap-3">
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  required
-                  placeholder="Valor original (R$)"
-                  value={originalStr}
-                  onChange={(e) => setOriginalStr(e.target.value)}
-                  className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-                />
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="Saldo devedor (R$)"
-                  value={outstandingStr}
-                  onChange={(e) => setOutstandingStr(e.target.value)}
-                  className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-                />
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="Parcela (R$)"
-                  value={installmentStr}
-                  onChange={(e) => setInstallmentStr(e.target.value)}
-                  className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-                />
-                <input
-                  type="number"
-                  min={1}
-                  max={31}
-                  placeholder="Dia"
-                  value={dueDay}
-                  onChange={(e) => setDueDay(e.target.value)}
-                  className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-                />
-                <select
-                  value={entityId}
-                  onChange={(e) => setEntityId(e.target.value as 'CPF' | 'CNPJ')}
-                  className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
-                >
-                  <option value="CPF">CPF</option>
-                  <option value="CNPJ">CNPJ</option>
-                </select>
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="flex-1 min-h-12 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="flex-[1.5] min-h-12 bg-[#14263d] dark:bg-emerald-600 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <CheckCircle2 size={16} /> Salvar dívida
-                </button>
-              </div>
-            </form>
+          <div className="grid grid-cols-2 gap-3">
+            <input
+              type="text"
+              inputMode="decimal"
+              required
+              placeholder="Valor original (R$)"
+              value={originalStr}
+              onChange={(e) => setOriginalStr(e.target.value)}
+              className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+            />
+            <input
+              type="text"
+              inputMode="decimal"
+              placeholder="Saldo devedor (R$)"
+              value={outstandingStr}
+              onChange={(e) => setOutstandingStr(e.target.value)}
+              className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+            />
           </div>
-        </div>
-      )}
+
+          <div className="grid grid-cols-3 gap-3">
+            <input
+              type="text"
+              inputMode="decimal"
+              placeholder="Parcela (R$)"
+              value={installmentStr}
+              onChange={(e) => setInstallmentStr(e.target.value)}
+              className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+            />
+            <input
+              type="number"
+              min={1}
+              max={31}
+              placeholder="Dia"
+              value={dueDay}
+              onChange={(e) => setDueDay(e.target.value)}
+              className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+            />
+            <select
+              value={entityId}
+              onChange={(e) => setEntityId(e.target.value as 'CPF' | 'CNPJ')}
+              className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-3 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+            >
+              <option value="CPF">CPF</option>
+              <option value="CNPJ">CNPJ</option>
+            </select>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setModalOpen(false)}
+              className="flex-1 min-h-12 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              className="flex-[1.5] min-h-12 bg-[#14263d] dark:bg-emerald-600 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <CheckCircle2 size={16} /> Salvar dívida
+            </button>
+          </div>
+        </form>
+      </Sheet>
     </div>
   );
 };

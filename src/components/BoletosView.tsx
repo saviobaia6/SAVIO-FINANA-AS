@@ -3,13 +3,15 @@ import { Boleto, Account } from '../types';
 import { calculateCountdown } from '../utils/countdown';
 import { validateAndParseBoleto } from '../utils/boletoValidator';
 import { parseCurrencyInput, formatCurrencyBRL } from '../utils/financeCalculations';
-import { Check, AlertCircle, Sparkles, Search, Plus, Trash2, X } from 'lucide-react';
+import { todayLocal } from '../utils/dateUtils';
+import { Sheet } from './Sheet';
+import { Check, AlertCircle, Sparkles, Search, Plus, Trash2 } from 'lucide-react';
 
 interface BoletosViewProps {
   boletos: Boleto[];
   accounts: Account[];
   onAddBoleto: (boleto: Boleto) => void;
-  onPayBoleto: (id: string, accountId?: string) => void;
+  onPayBoleto: (id: string, accountId: string, paidAmount?: number) => void;
   onDeleteBoleto?: (id: string) => void;
 }
 
@@ -25,7 +27,7 @@ export const BoletosView: React.FC<BoletosViewProps> = ({
   const [beneficiarioInput, setBeneficiarioInput] = useState('');
   const [descricaoInput, setDescricaoInput] = useState('');
   const [valorInput, setValorInput] = useState('');
-  const [vencimentoInput, setVencimentoInput] = useState(new Date().toISOString().split('T')[0]);
+  const [vencimentoInput, setVencimentoInput] = useState(() => todayLocal());
   const [entityInput, setEntityInput] = useState<'CPF' | 'CNPJ'>('CPF');
   const [categoryInput, setCategoryInput] = useState('Moradia');
 
@@ -39,6 +41,8 @@ export const BoletosView: React.FC<BoletosViewProps> = ({
 
   const [payingBoleto, setPayingBoleto] = useState<Boleto | null>(null);
   const [paymentAccountId, setPaymentAccountId] = useState<string>('');
+  const [paidAmountStr, setPaidAmountStr] = useState<string>('');
+  const [paymentError, setPaymentError] = useState<string>('');
 
   const checkBarcodeDuplicate = (rawCode: string, normalizedCode: string): boolean => {
     const cleanRaw = rawCode.replace(/\D/g, '');
@@ -223,19 +227,36 @@ export const BoletosView: React.FC<BoletosViewProps> = ({
     };
   }, [filteredBoletos]);
 
+  const activeAccounts = useMemo(() => accounts.filter((a) => !a.archived), [accounts]);
+
   const openPaymentConfirm = (b: Boleto) => {
-    const preferred = accounts.find((a) => a.entityId === b.entityId) || accounts[0];
+    const preferred = activeAccounts.find((a) => a.entityId === b.entityId) || activeAccounts[0];
     setPaymentAccountId(preferred?.id || '');
+    setPaidAmountStr(b.valorOriginal.toFixed(2).replace('.', ','));
+    setPaymentError('');
     setPayingBoleto(b);
   };
 
-  const confirmPayment = () => {
+  const confirmPayment = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!payingBoleto) return;
-    onPayBoleto(payingBoleto.id, paymentAccountId || undefined);
+
+    if (!paymentAccountId) {
+      setPaymentError('Selecione uma conta bancária ativa para registrar a baixa do boleto.');
+      return;
+    }
+
+    const parsedPaid = parseCurrencyInput(paidAmountStr);
+    if (isNaN(parsedPaid) || parsedPaid <= 0) {
+      setPaymentError('Informe um valor pago válido maior que zero.');
+      return;
+    }
+
+    onPayBoleto(payingBoleto.id, paymentAccountId, parsedPaid);
     setSuccessMsg(
-      `Pagamento de "${payingBoleto.beneficiario}" registrado${
-        paymentAccountId ? ' com lançamento automático na conta selecionada.' : '.'
-      }`
+      `Pagamento de "${payingBoleto.beneficiario}" registrado (R$ ${formatCurrencyBRL(
+        parsedPaid
+      )}) com débito na conta selecionada.`
     );
     setPayingBoleto(null);
   };
@@ -264,8 +285,15 @@ export const BoletosView: React.FC<BoletosViewProps> = ({
                       {b.descricao}
                     </div>
                   </div>
-                  <div className="text-sm font-extrabold text-slate-900 dark:text-white shrink-0">
-                    R$ {formatCurrencyBRL(b.valorOriginal)}
+                  <div className="text-right shrink-0">
+                    <div className="text-sm font-extrabold text-slate-900 dark:text-white">
+                      R$ {formatCurrencyBRL(b.status === 'PAID' && typeof b.paidAmount === 'number' ? b.paidAmount : b.valorOriginal)}
+                    </div>
+                    {b.status === 'PAID' && typeof b.paidAmount === 'number' && Math.abs(b.paidAmount - b.valorOriginal) > 0.009 && (
+                      <div className="text-[10px] text-slate-400">
+                        Orig.: R$ {formatCurrencyBRL(b.valorOriginal)}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -295,9 +323,7 @@ export const BoletosView: React.FC<BoletosViewProps> = ({
                     {onDeleteBoleto && (
                       <button
                         type="button"
-                        onClick={() => {
-                          if (window.confirm(`Remover "${b.beneficiario}"?`)) onDeleteBoleto(b.id);
-                        }}
+                        onClick={() => onDeleteBoleto(b.id)}
                         className="min-w-10 min-h-10 grid place-items-center text-slate-400 hover:text-red-600 cursor-pointer"
                         aria-label={`Remover ${b.beneficiario}`}
                       >
@@ -352,7 +378,14 @@ export const BoletosView: React.FC<BoletosViewProps> = ({
                       </span>
                     </td>
                     <td className="py-4 px-6 text-right font-extrabold text-slate-900 dark:text-white">
-                      R$ {formatCurrencyBRL(b.valorOriginal)}
+                      <div>
+                        R$ {formatCurrencyBRL(b.status === 'PAID' && typeof b.paidAmount === 'number' ? b.paidAmount : b.valorOriginal)}
+                      </div>
+                      {b.status === 'PAID' && typeof b.paidAmount === 'number' && Math.abs(b.paidAmount - b.valorOriginal) > 0.009 && (
+                        <small className="font-normal text-slate-400">
+                          Original: R$ {formatCurrencyBRL(b.valorOriginal)}
+                        </small>
+                      )}
                     </td>
                     <td className="py-4 px-6 text-center">
                       <div className="inline-flex items-center gap-2">
@@ -368,9 +401,7 @@ export const BoletosView: React.FC<BoletosViewProps> = ({
                         {onDeleteBoleto && (
                           <button
                             type="button"
-                            onClick={() => {
-                              if (window.confirm(`Remover "${b.beneficiario}"?`)) onDeleteBoleto(b.id);
-                            }}
+                            onClick={() => onDeleteBoleto(b.id)}
                             className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg cursor-pointer"
                             title="Excluir"
                           >
@@ -623,30 +654,26 @@ export const BoletosView: React.FC<BoletosViewProps> = ({
         </div>
       )}
 
-      {/* Payment Confirmation Modal */}
-      {payingBoleto && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-end md:items-center justify-center">
-          <div
-            className="bg-white dark:bg-slate-900 w-full md:max-w-md rounded-t-3xl md:rounded-2xl p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4"
-            role="dialog"
-            aria-modal="true"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-[#14263d] dark:text-white">Confirmar pagamento</h3>
-              <button
-                type="button"
-                onClick={() => setPayingBoleto(null)}
-                className="min-w-10 min-h-10 grid place-items-center text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
-                aria-label="Fechar"
-              >
-                <X size={20} />
-              </button>
-            </div>
+      {/* Payment Sheet (Conta obrigatória + Valor pago) */}
+      <Sheet
+        open={Boolean(payingBoleto)}
+        onClose={() => setPayingBoleto(null)}
+        title="Confirmar pagamento de boleto"
+        subtitle={payingBoleto ? payingBoleto.beneficiario : undefined}
+      >
+        {payingBoleto && (
+          <form onSubmit={confirmPayment} className="space-y-4">
+            {paymentError && (
+              <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl text-xs flex items-center gap-2">
+                <AlertCircle size={15} className="shrink-0" />
+                <span>{paymentError}</span>
+              </div>
+            )}
 
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 text-xs space-y-1">
               <div className="font-bold text-slate-900 dark:text-white">{payingBoleto.beneficiario}</div>
               <div className="text-slate-500 dark:text-slate-400">
-                Valor: <strong className="text-emerald-700 dark:text-emerald-400">R$ {formatCurrencyBRL(payingBoleto.valorOriginal)}</strong>
+                Valor original: <strong className="text-slate-800 dark:text-slate-200">R$ {formatCurrencyBRL(payingBoleto.valorOriginal)}</strong>
               </div>
               <div className="text-slate-500 dark:text-slate-400">
                 Vencimento: {payingBoleto.vencimento.split('-').reverse().join('/')}
@@ -654,22 +681,63 @@ export const BoletosView: React.FC<BoletosViewProps> = ({
             </div>
 
             <div>
-              <label htmlFor="pay-account" className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
-                Debitar saldo e lançar despesa na conta:
+              <label htmlFor="pay-amount" className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                Valor efetivamente pago (R$) *
               </label>
-              <select
-                id="pay-account"
-                value={paymentAccountId}
-                onChange={(e) => setPaymentAccountId(e.target.value)}
-                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-white min-h-12"
-              >
-                <option value="">Apenas marcar como pago (sem lançar na conta)</option>
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.institutionName} · {a.accountName} ({a.entityId})
+              <input
+                id="pay-amount"
+                type="text"
+                inputMode="decimal"
+                required
+                value={paidAmountStr}
+                onChange={(e) => {
+                  setPaidAmountStr(e.target.value);
+                  setPaymentError('');
+                }}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-bold bg-white dark:bg-slate-800 text-slate-900 dark:text-white min-h-12"
+              />
+              {(() => {
+                const diff = parseCurrencyInput(paidAmountStr) - payingBoleto.valorOriginal;
+                if (isNaN(diff) || Math.abs(diff) < 0.01) return null;
+                return (
+                  <p className={`text-[11px] font-semibold mt-1 ${diff > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-400'}`}>
+                    {diff > 0
+                      ? `Inclui juros/multa de R$ ${formatCurrencyBRL(diff)}`
+                      : `Com desconto de R$ ${formatCurrencyBRL(Math.abs(diff))}`}
+                  </p>
+                );
+              })()}
+            </div>
+
+            <div>
+              <label htmlFor="pay-account" className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                Conta pagadora (obrigatória) *
+              </label>
+              {activeAccounts.length === 0 ? (
+                <p className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200 font-semibold">
+                  Cadastre ou reative uma conta bancária em &quot;Contas&quot; para poder dar baixa em boletos.
+                </p>
+              ) : (
+                <select
+                  id="pay-account"
+                  required
+                  value={paymentAccountId}
+                  onChange={(e) => {
+                    setPaymentAccountId(e.target.value);
+                    setPaymentError('');
+                  }}
+                  className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-white min-h-12"
+                >
+                  <option value="" disabled>
+                    Selecione uma conta bancária...
                   </option>
-                ))}
-              </select>
+                  {activeAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.institutionName} · {a.accountName} ({a.entityId})
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <div className="flex gap-3 pt-2">
@@ -681,16 +749,16 @@ export const BoletosView: React.FC<BoletosViewProps> = ({
                 Cancelar
               </button>
               <button
-                type="button"
-                onClick={confirmPayment}
-                className="flex-[1.5] min-h-12 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold cursor-pointer"
+                type="submit"
+                disabled={activeAccounts.length === 0}
+                className="flex-[1.5] min-h-12 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-sm font-bold cursor-pointer"
               >
                 Confirmar baixa
               </button>
             </div>
-          </div>
-        </div>
-      )}
+          </form>
+        )}
+      </Sheet>
     </div>
   );
 };
